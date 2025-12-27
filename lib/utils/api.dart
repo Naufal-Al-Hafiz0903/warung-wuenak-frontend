@@ -110,8 +110,25 @@ class Api {
   // RESPONSE HANDLER (GLOBAL)
   // =====================================================
   static Map<String, dynamic> _handleResponse(http.Response response) {
+    final body = response.body;
+
+    // Jika server balas HTML (biasanya <br /> warning PHP), jangan paksa jsonDecode
+    final trimmed = body.trimLeft();
+    if (trimmed.startsWith('<')) {
+      return {
+        "ok": false,
+        "message":
+            "Server mengirim HTML (bukan JSON). Cek error PHP di backend.",
+        "statusCode": response.statusCode,
+        "rawPreview": trimmed.substring(
+          0,
+          trimmed.length > 200 ? 200 : trimmed.length,
+        ),
+      };
+    }
+
     try {
-      final decoded = jsonDecode(response.body);
+      final decoded = jsonDecode(body);
 
       if (decoded is Map<String, dynamic>) {
         return decoded;

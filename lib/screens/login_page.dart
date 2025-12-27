@@ -1,8 +1,14 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import '../services/api.dart';
+import '../utils/api.dart';
 import 'register_page.dart';
 import 'home_page.dart';
+
+// ⬇️ TAMBAHKAN IMPORT INI
+import '../seller/seller_dashboard.dart';
+// nanti kalau ada admin
+// import '../admin/admin_dashboard.dart';
 
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
@@ -28,7 +34,7 @@ class _LoginPageState extends State<LoginPage> {
     setState(() => loading = true);
 
     // =============================
-    // LOGIN
+    // LOGIN (TETAP)
     // =============================
     final res = await Api.login(
       email: emailC.text.trim(),
@@ -43,19 +49,19 @@ class _LoginPageState extends State<LoginPage> {
       final String token = res["token"].toString();
 
       // =============================
-      // DEBUG: CETAK JWT
+      // DEBUG JWT (TETAP)
       // =============================
       debugPrint("========== JWT TOKEN ==========");
       debugPrint(token);
       debugPrint("================================");
 
       // =============================
-      // CEK APAKAH TOKEN JWT (ADA . .)
+      // CEK FORMAT JWT (TETAP)
       // =============================
       final bool isJwt = token.split('.').length == 3;
 
       // =============================
-      // VALIDASI JWT KE BACKEND
+      // VALIDASI JWT KE BACKEND (TETAP)
       // =============================
       final check = await Api.checkToken(token);
 
@@ -76,16 +82,24 @@ class _LoginPageState extends State<LoginPage> {
       }
 
       // =============================
-      // SIMPAN KE SHARED PREFERENCES
+      // SIMPAN KE SHARED PREFERENCES (REVISI: tambah kompatibilitas RoleGuard)
       // =============================
       final prefs = await SharedPreferences.getInstance();
+
+      // ✅ key lama (punyamu)
       await prefs.setString("token", token);
       await prefs.setString("email", res["data"]["email"] ?? "");
       await prefs.setString("name", res["data"]["name"] ?? "");
       await prefs.setString("level", res["data"]["level"] ?? "user");
 
+      // ✅ key yang dibaca AuthService/RoleGuard
+      await prefs.setString("jwt_token", token);
+      await prefs.setString("user_data", jsonEncode(res["data"] ?? {}));
+
+      final String level = res["data"]["level"] ?? "user";
+
       // =============================
-      // INFO KE USER
+      // INFO KE USER (TETAP)
       // =============================
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -99,12 +113,26 @@ class _LoginPageState extends State<LoginPage> {
       );
 
       // =============================
-      // MASUK KE HOME
+      // ROUTING MULTIUSER (REVISI INTI: ADMIN masuk dashboard)
       // =============================
-      Navigator.pushReplacement(
-        context,
-        MaterialPageRoute(builder: (_) => HomePage(user: res["data"])),
-      );
+      if (!mounted) return;
+
+      if (level == "penjual") {
+        // ➜ PENJUAL
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(builder: (_) => const SellerDashboard()),
+        );
+      } else if (level == "admin") {
+        // ➜ ADMIN: masuk ke route /admin (yang pakai RoleGuard + AdminLayout)
+        Navigator.pushNamedAndRemoveUntil(context, '/admin', (_) => false);
+      } else {
+        // ➜ USER BIASA
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(builder: (_) => HomePage(user: res["data"])),
+        );
+      }
     } else {
       ScaffoldMessenger.of(
         context,
