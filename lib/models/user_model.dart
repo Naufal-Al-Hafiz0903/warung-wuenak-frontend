@@ -26,13 +26,18 @@ class UserModel {
   static double _toDouble(dynamic v) =>
       double.tryParse(v?.toString() ?? '') ?? 0.0;
 
+  static String _toLowerStr(dynamic v, String def) {
+    final s = (v ?? def).toString().trim();
+    return s.isEmpty ? def : s.toLowerCase();
+  }
+
   factory UserModel.fromJson(Map<String, dynamic> j) {
     return UserModel(
       userId: _toInt(j['user_id']),
       name: (j['name'] ?? '').toString(),
       email: (j['email'] ?? '').toString(),
-      level: (j['level'] ?? 'user').toString(),
-      status: (j['status'] ?? 'aktif').toString(),
+      level: _toLowerStr(j['level'], 'user'),
+      status: _toLowerStr(j['status'], 'aktif'),
       saldo: _toDouble(j['saldo']),
       nomorUser: j['nomor_user']?.toString(),
       alamatUser: j['alamat_user']?.toString(),
