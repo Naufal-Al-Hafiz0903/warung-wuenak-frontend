@@ -2,15 +2,12 @@ class OrderModel {
   final int orderId;
   final int userId;
 
-  /// total order (dari orders.total_amount)
   final double totalAmount;
 
-  /// Alias agar kompatibel dengan code lama yang pakai o.totalPrice
-  /// (TIDAK menghilangkan fungsi apa pun)
   double get totalPrice => totalAmount;
 
-  final String status; // menunggu|dibayar|dikirim|selesai
-  final String metodePembayaran; // transfer|ewallet|cod
+  final String status;
+  final String metodePembayaran;
   final String? createdAt;
 
   // dari JOIN
@@ -33,12 +30,14 @@ class OrderModel {
 
   factory OrderModel.fromJson(Map<String, dynamic> j) {
     return OrderModel(
-      orderId: _toInt(j['order_id']),
-      userId: _toInt(j['user_id']),
-      totalAmount: _toDouble(j['total_amount']),
+      orderId: _toInt(j['order_id'] ?? j['orderId'] ?? j['id']),
+      userId: _toInt(j['user_id'] ?? j['userId']),
+      totalAmount: _toDouble(j['total_amount'] ?? j['totalAmount']),
       status: (j['status'] ?? 'menunggu').toString(),
-      metodePembayaran: (j['metode_pembayaran'] ?? 'transfer').toString(),
-      createdAt: j['created_at']?.toString(),
+      metodePembayaran:
+          (j['metode_pembayaran'] ?? j['metodePembayaran'] ?? 'transfer')
+              .toString(),
+      createdAt: j['created_at']?.toString() ?? j['createdAt']?.toString(),
       pembeli: j['pembeli']?.toString(),
     );
   }

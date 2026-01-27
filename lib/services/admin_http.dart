@@ -1,19 +1,25 @@
 import 'dart:convert';
+import 'dart:io';
+
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
+import '../core/config/app_config.dart';
 
 class AdminHttp {
-  /// WAJIB sesuaikan:
-  /// - Android emulator: http://10.0.2.2/backend/
-  /// - HP fisik: http://IP_LAPTOP/backend/
-  static const String baseUrl = 'http://10.0.2.2/backend/';
+  static const String baseUrl = '${AppConfig.baseUrl}/';
 
-  static const _tokenKey = 'token'; // samakan dengan key token kamu saat login
+  static const _tokenKeyLegacy = 'token';
+  static const _tokenKeyNew = 'jwt_token';
 
   static Future<String?> _getToken() async {
     final sp = await SharedPreferences.getInstance();
-    return sp.getString(_tokenKey);
+    return sp.getString(_tokenKeyNew) ?? sp.getString(_tokenKeyLegacy);
+  }
+
+  static Uri _uri(String path) {
+    final p = path.startsWith('/') ? path.substring(1) : path;
+    return Uri.parse('$baseUrl$p');
   }
 
   static Map<String, String> _mergeHeaders(
@@ -36,7 +42,6 @@ class AdminHttp {
 
       if (decoded is Map<String, dynamic>) return decoded;
 
-      // kalau backend balas List langsung
       if (decoded is List) {
         return {'ok': true, 'data': decoded, 'status': statusCode};
       }
@@ -59,7 +64,7 @@ class AdminHttp {
 
   static Future<Map<String, dynamic>> getJson(String path) async {
     final token = await _getToken();
-    final uri = Uri.parse('$baseUrl$path');
+    final uri = _uri(path);
 
     try {
       final res = await http.get(uri, headers: _mergeHeaders(token));
@@ -71,7 +76,6 @@ class AdminHttp {
 
       final data = _safeJsonDecode(res.body, res.statusCode);
 
-      // Kalau status bukan 200 dan backend tidak set ok=false
       if (res.statusCode >= 400 && data['ok'] == null) {
         return {'ok': false, 'message': 'HTTP ${res.statusCode}', 'data': data};
       }
@@ -87,7 +91,7 @@ class AdminHttp {
     Map<String, String> body,
   ) async {
     final token = await _getToken();
-    final uri = Uri.parse('$baseUrl$path');
+    final uri = _uri(path);
 
     try {
       final res = await http.post(
@@ -113,6 +117,82 @@ class AdminHttp {
       return data;
     } catch (e) {
       return {'ok': false, 'message': 'POST error: $e'};
+    }
+  }
+
+  static Future<Map<String, dynamic>> postJson(
+    String path,
+    Map<String, dynamic> body,
+  ) async {
+    final token = await _getToken();
+    final uri = _uri(path);
+
+    try {
+      final res = await http.post(
+        uri,
+        headers: _mergeHeaders(token, {'Content-Type': 'application/json'}),
+        body: jsonEncode(body),
+      );
+
+      if (kDebugMode) {
+        debugPrint('[POST-JSON] $uri -> ${res.statusCode}');
+        debugPrint('BODY: $body');
+        debugPrint(res.body);
+      }
+
+      final data = _safeJsonDecode(res.body, res.statusCode);
+
+      if (res.statusCode >= 400 && data['ok'] == null) {
+        return {'ok': false, 'message': 'HTTP ${res.statusCode}', 'data': data};
+      }
+
+      return data;
+    } catch (e) {
+      return {'ok': false, 'message': 'POST error: $e'};
+    }
+  }
+
+  // ============================================================
+  // ✅ NEW: multipart upload (file)
+  // ============================================================
+  static Future<Map<String, dynamic>> postMultipart(
+    String path, {
+    required File file,
+    String fileField = 'file',
+    Map<String, String> fields = const {},
+  }) async {
+    final token = await _getToken();
+    final uri = _uri(path);
+
+    try {
+      final req = http.MultipartRequest('POST', uri);
+      req.headers.addAll(_mergeHeaders(token)); // no content-type manual
+      req.fields.addAll(fields);
+
+      req.files.add(await http.MultipartFile.fromPath(fileField, file.path));
+
+      final streamed = await req.send();
+      final body = await streamed.stream.bytesToString();
+
+      if (kDebugMode) {
+        debugPrint('[POST-MULTIPART] $uri -> ${streamed.statusCode}');
+        debugPrint('FIELDS: $fields');
+        debugPrint(body);
+      }
+
+      final data = _safeJsonDecode(body, streamed.statusCode);
+
+      if (streamed.statusCode >= 400 && data['ok'] == null) {
+        return {
+          'ok': false,
+          'message': 'HTTP ${streamed.statusCode}',
+          'data': data,
+        };
+      }
+
+      return data;
+    } catch (e) {
+      return {'ok': false, 'message': 'POST multipart error: $e'};
     }
   }
 }

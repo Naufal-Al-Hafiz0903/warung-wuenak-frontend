@@ -1,8 +1,19 @@
 import 'package:flutter/material.dart';
-import 'screens/login_page.dart';
-import 'seller/seller_dashboard.dart';
-import 'admin/admin_layout.dart';
-import 'utils/role_guard.dart';
+
+import 'features/presentation/login_page.dart';
+import 'core/guards/role_guard.dart';
+import 'core/theme/app_theme.dart';
+
+import 'seller/presentation/pages/seller_dashboard.dart';
+import 'seller/presentation/pages/seller_products_page.dart';
+import 'seller/presentation/pages/seller_product_add_page.dart';
+import 'seller/presentation/pages/seller_orders_page.dart';
+import 'seller/presentation/pages/seller_toko_page.dart';
+import 'seller/presentation/pages/seller_profile_page.dart';
+
+import 'admin/presentation/layout/admin_layout.dart';
+import 'user/presentation/pages/user_entry_page.dart';
+import 'courier/presentation/pages/courier_entry_page.dart';
 
 void main() {
   runApp(const MyApp());
@@ -15,10 +26,41 @@ class MyApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
+      theme: AppTheme.light(),
       routes: {
-        '/': (context) => LoginPage(),
-        '/seller': (context) => const SellerDashboard(),
-        '/admin': (context) =>
+        '/': (_) => const LoginPage(),
+        '/login': (_) => const LoginPage(),
+
+        // USER
+        '/user': (_) =>
+            const RoleGuard(requiredRole: 'user', child: UserEntryPage()),
+
+        // COURIER
+        '/courier': (_) =>
+            const RoleGuard(requiredRole: 'kurir', child: CourierEntryPage()),
+
+        // SELLER
+        '/seller': (_) =>
+            const RoleGuard(requiredRole: 'penjual', child: SellerDashboard()),
+        '/seller/products': (_) => const RoleGuard(
+          requiredRole: 'penjual',
+          child: SellerProductsPage(),
+        ),
+        '/seller/products/add': (_) => const RoleGuard(
+          requiredRole: 'penjual',
+          child: SellerProductAddPage(),
+        ),
+        '/seller/orders': (_) =>
+            const RoleGuard(requiredRole: 'penjual', child: SellerOrdersPage()),
+        '/seller/toko': (_) =>
+            const RoleGuard(requiredRole: 'penjual', child: SellerTokoPage()),
+        '/seller/profile': (_) => const RoleGuard(
+          requiredRole: 'penjual',
+          child: SellerProfilePage(),
+        ),
+
+        // ADMIN
+        '/admin': (_) =>
             const RoleGuard(requiredRole: 'admin', child: AdminLayout()),
       },
       initialRoute: '/',

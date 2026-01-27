@@ -1,9 +1,15 @@
 class PaymentModel {
   final int paymentId;
   final int orderId;
-  final String metode; // transfer|ewallet|cod
+
+  final String metode; // cash|transfer|qris
   final String status; // menunggu|dibayar|gagal
   final String? paidAt;
+
+  // ✅ kolom payment asli (sekarang backend sudah kirim)
+  final String? provider;
+  final String? referenceCode;
+  final double? amount;
 
   // dari JOIN
   final double? totalAmount;
@@ -15,6 +21,9 @@ class PaymentModel {
     required this.metode,
     required this.status,
     required this.paidAt,
+    required this.provider,
+    required this.referenceCode,
+    required this.amount,
     required this.totalAmount,
     required this.pembeli,
   });
@@ -30,6 +39,11 @@ class PaymentModel {
       metode: (j['metode'] ?? 'transfer').toString(),
       status: (j['status'] ?? 'menunggu').toString(),
       paidAt: j['paid_at']?.toString(),
+
+      provider: j['provider']?.toString(),
+      referenceCode: j['reference_code']?.toString(),
+      amount: j.containsKey('amount') ? _toDouble(j['amount']) : null,
+
       totalAmount: j.containsKey('total_amount')
           ? _toDouble(j['total_amount'])
           : null,
