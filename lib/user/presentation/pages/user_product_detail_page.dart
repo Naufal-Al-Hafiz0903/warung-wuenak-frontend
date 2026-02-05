@@ -1,10 +1,12 @@
-// pages/user_product_detail_page.dart
-import 'dart:convert';
-
 import 'package:flutter/material.dart';
-import 'package:http/http.dart' as http;
-import 'package:shared_preferences/shared_preferences.dart';
-import '../../../core/config/app_config.dart';
+
+import '../../../core/location/device_location_service.dart';
+import '../../../core/utils/geo_haversine.dart';
+import '../../../services/user_http.dart';
+
+import '../../data/product_detail_service.dart';
+import '../../data/toko_location_service.dart';
+
 import 'user_cart_page.dart';
 import 'user_checkout_page.dart';
 
@@ -25,37 +27,294 @@ class UserProductDetailPage extends StatefulWidget {
 }
 
 class _UserProductDetailPageState extends State<UserProductDetailPage> {
-  // UBAH baseUrl sesuai backend kamu
-  static const String _baseUrl = AppConfig.baseUrl;
-
   bool _loading = false;
   bool _loadingDetail = false;
+
   Map<String, dynamic>? _p;
   int _qty = 1;
+
+  // ===== TUGAS: toko + jarak =====
+  bool _loadingToko = false;
+  String? _tokoError;
+
+  String? _tokoName;
+  String? _tokoAlamat;
+  String? _tokoStatus;
+
+  double? _distanceKm;
+  int? _distanceM;
 
   @override
   void initState() {
     super.initState();
     _p = widget.product;
-    if (_p == null && widget.productId != null) {
-      _fetchDetail(widget.productId!);
+
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (_p == null && widget.productId != null) {
+        await _fetchDetail(widget.productId!);
+      } else {
+        _afterProductLoaded();
+      }
+    });
+  }
+
+  void _afterProductLoaded() {
+    _guardIfInactive();
+    _loadTokoAndDistance();
+  }
+
+  void _snack(String s) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(s), behavior: SnackBarBehavior.floating),
+    );
+  }
+
+  // ======================
+  // Helpers parse data
+  // ======================
+  int _toInt(dynamic v, [int def = 0]) {
+    if (v == null) return def;
+    if (v is num) return v.toInt();
+    return int.tryParse('$v') ?? def;
+  }
+
+  double _toDouble(dynamic v, [double def = 0]) {
+    if (v == null) return def;
+    if (v is num) return v.toDouble();
+    return double.tryParse('$v') ?? def;
+  }
+
+  String _pickStr(dynamic a, dynamic b, [String def = '']) {
+    final v = a ?? b;
+    if (v == null) return def;
+    final s = v.toString().trim();
+    return s.isEmpty ? def : s;
+  }
+
+  String _resolveImageUrl(String raw) {
+    final s = raw.trim();
+    if (s.isEmpty) return '';
+    if (s.startsWith('http://') || s.startsWith('https://')) return s;
+    final base = UserHttp.baseUrl; // ".../"
+    final cleaned = s.startsWith('/') ? s.substring(1) : s;
+    return '$base$cleaned';
+  }
+
+  bool _isActiveFromMap(Map<String, dynamic>? p) {
+    if (p == null) return true;
+    final s =
+        (p['status'] ??
+                p['product_status'] ??
+                p['productStatus'] ??
+                p['status_produk'] ??
+                '')
+            .toString()
+            .trim()
+            .toLowerCase();
+
+    if (s.isEmpty) return true;
+    return s == 'aktif';
+  }
+
+  int _stok() {
+    final v = _p?['stok'] ?? _p?['stock'];
+    return _toInt(v, 0);
+  }
+
+  num _harga() {
+    final v = _p?['harga'] ?? _p?['price'];
+    if (v is num) return v;
+    return num.tryParse('${v ?? 0}') ?? 0;
+  }
+
+  String _imgRaw() {
+    final v = _p?['image_url'] ?? _p?['imageUrl'] ?? _p?['gambar'];
+    return (v == null) ? '' : '$v';
+  }
+
+  int _productId() {
+    final v = _p?['product_id'] ?? _p?['productId'] ?? _p?['id'];
+    return _toInt(v, 0);
+  }
+
+  int _tokoId() {
+    final v =
+        _p?['toko_id'] ?? _p?['tokoId'] ?? _p?['shop_id'] ?? _p?['shopId'];
+    return _toInt(v, 0);
+  }
+
+  void _guardIfInactive() {
+    final inactive = !_isActiveFromMap(_p);
+    if (!inactive) return;
+
+    if (!mounted) return;
+    showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Produk tidak tersedia'),
+        content: const Text(
+          'Produk ini berstatus NONAKTIF sehingga tidak bisa dibuka/dibeli.',
+        ),
+        actions: [
+          FilledButton(
+            onPressed: () {
+              Navigator.pop(ctx);
+              if (mounted) Navigator.pop(context);
+            },
+            child: const Text('Kembali'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ======================
+  // Fetch detail via service (UserHttp)
+  // ======================
+  Future<void> _fetchDetail(int id) async {
+    setState(() => _loadingDetail = true);
+    try {
+      final res = await ProductDetailService.fetchDetailRaw(id);
+      if (res['ok'] == true) {
+        // coba ambil map produk dari beberapa kemungkinan field
+        dynamic prod = res['product'] ?? res['data'] ?? res['item'];
+
+        if (prod is Map) {
+          setState(() => _p = Map<String, dynamic>.from(prod));
+        } else if (res is Map && res['data'] is Map) {
+          setState(() => _p = Map<String, dynamic>.from(res['data']));
+        }
+      }
+    } finally {
+      if (mounted) setState(() => _loadingDetail = false);
+    }
+
+    _afterProductLoaded();
+  }
+
+  // ======================
+  // Add to cart via UserHttp
+  // ======================
+  Future<void> _addToCart({required int qty}) async {
+    final pid = _productId();
+    if (pid <= 0) {
+      _snack('Produk tidak valid');
+      return;
+    }
+    if (qty <= 0) qty = 1;
+
+    if (!_isActiveFromMap(_p)) {
+      _snack('Produk NONAKTIF (tidak bisa ditambahkan)');
+      return;
+    }
+
+    setState(() => _loading = true);
+    try {
+      final res = await UserHttp.postJson('cart/add', {
+        'product_id': pid,
+        'quantity': qty,
+      });
+
+      if (res['ok'] == true) {
+        _snack('Produk masuk keranjang');
+        return;
+      }
+
+      final msg = (res['detail'] ?? res['message'] ?? 'Gagal menambahkan')
+          .toString();
+      _snack(msg);
+    } finally {
+      if (mounted) setState(() => _loading = false);
     }
   }
 
-  Future<String?> _token() async {
-    final sp = await SharedPreferences.getInstance();
-    return sp.getString('jwt_token') ?? sp.getString('token');
-  }
+  // ======================
+  // TUGAS: toko + jarak user ↔ toko
+  // ======================
+  Future<void> _loadTokoAndDistance() async {
+    if (_loadingToko) return;
 
-  Map<String, String> _gradHeaders({String? token}) {
-    final h = <String, String>{
-      'Accept': 'application/json',
-      'Content-Type': 'application/json',
-    };
-    if (token != null && token.isNotEmpty) {
-      h['Authorization'] = 'Bearer $token';
+    final pid = _productId();
+    if (pid <= 0) return;
+
+    final tokoId = _tokoId();
+    if (tokoId <= 0) return;
+
+    setState(() {
+      _loadingToko = true;
+      _tokoError = null;
+    });
+
+    try {
+      // ambil info toko dari payload produk (kalau ada)
+      final tokoMap = (_p?['toko'] is Map)
+          ? Map<String, dynamic>.from(_p!['toko'])
+          : <String, dynamic>{};
+
+      final tokoName = _pickStr(
+        _p?['nama_toko'] ?? _p?['namaToko'] ?? tokoMap['nama_toko'],
+        _p?['toko_name'] ?? tokoMap['toko_name'],
+        '',
+      );
+
+      final tokoAlamat = _pickStr(
+        _p?['alamat_toko'] ?? _p?['alamatToko'] ?? tokoMap['alamat_toko'],
+        tokoMap['alamatToko'],
+        '',
+      );
+
+      final tokoStatus = _pickStr(
+        _p?['toko_status'] ?? tokoMap['status'],
+        _p?['status_toko'] ?? tokoMap['toko_status'],
+        '',
+      );
+
+      // ambil GPS user
+      final pos = await DeviceLocationService.getCurrentHighAccuracy();
+
+      // ambil lokasi toko dari endpoint
+      final loc = await TokoLocationService.fetchTokoLocation(tokoId);
+
+      if (loc == null) {
+        setState(() {
+          _tokoName = tokoName.isEmpty ? null : tokoName;
+          _tokoAlamat = tokoAlamat.isEmpty ? null : tokoAlamat;
+          _tokoStatus = tokoStatus.isEmpty ? null : tokoStatus;
+          _tokoError = 'Lokasi toko tidak ditemukan';
+        });
+        return;
+      }
+
+      final lat = _toDouble(loc['lat'] ?? loc['latitude'], 0);
+      final lng = _toDouble(loc['lng'] ?? loc['longitude'], 0);
+
+      if (lat == 0 || lng == 0) {
+        setState(() {
+          _tokoName = tokoName.isEmpty ? null : tokoName;
+          _tokoAlamat = tokoAlamat.isEmpty ? null : tokoAlamat;
+          _tokoStatus = tokoStatus.isEmpty ? null : tokoStatus;
+          _tokoError = 'Koordinat toko tidak valid';
+        });
+        return;
+      }
+
+      final meters = haversineMeters(pos.latitude, pos.longitude, lat, lng);
+      final km = meters / 1000.0;
+
+      setState(() {
+        _tokoName = tokoName.isEmpty ? null : tokoName;
+        _tokoAlamat = tokoAlamat.isEmpty ? null : tokoAlamat;
+        _tokoStatus = tokoStatus.isEmpty ? null : tokoStatus;
+        _distanceM = meters.round();
+        _distanceKm = km;
+      });
+    } catch (e) {
+      setState(() => _tokoError = e.toString());
+    } finally {
+      if (mounted) setState(() => _loadingToko = false);
     }
-    return h;
   }
 
   String _rupiah(num v) {
@@ -70,95 +329,18 @@ class _UserProductDetailPageState extends State<UserProductDetailPage> {
     return 'Rp ${buf.toString().split('').reversed.join()}';
   }
 
-  Future<void> _fetchDetail(int id) async {
-    setState(() => _loadingDetail = true);
-    try {
-      // asumsi endpoint: GET /products/{id}
-      final r = await http.get(Uri.parse('$_baseUrl/products/$id'));
-      if (r.statusCode >= 200 && r.statusCode < 300) {
-        final j = jsonDecode(r.body);
-        final data = (j is Map && j['data'] != null) ? j['data'] : j;
-        if (data is Map) {
-          setState(() => _p = Map<String, dynamic>.from(data as Map));
-        }
-      }
-    } finally {
-      if (mounted) setState(() => _loadingDetail = false);
-    }
-  }
-
-  int _stok() {
-    final v = _p?['stok'];
-    if (v is num) return v.toInt();
-    return int.tryParse('${v ?? 0}') ?? 0;
-  }
-
-  num _harga() {
-    final v = _p?['harga'];
-    if (v is num) return v;
-    return num.tryParse('${v ?? 0}') ?? 0;
-  }
-
-  String _img() {
-    final v = _p?['image_url'] ?? _p?['imageUrl'] ?? _p?['gambar'];
-    return (v == null) ? '' : '$v';
-  }
-
-  int _productId() {
-    final v = _p?['product_id'] ?? _p?['productId'];
-    if (v is num) return v.toInt();
-    return int.tryParse('${v ?? 0}') ?? 0;
-  }
-
-  Future<void> _addToCart({required int qty}) async {
-    final pid = _productId();
-    if (pid <= 0) {
-      _snack('Produk tidak valid');
-      return;
-    }
-    if (qty <= 0) qty = 1;
-
-    final tok = await _token();
-    if (tok == null || tok.isEmpty) {
-      _snack('Token tidak ditemukan, silakan login ulang');
-      return;
-    }
-
-    setState(() => _loading = true);
-    try {
-      final r = await http.post(
-        Uri.parse('$_baseUrl/cart/add'),
-        headers: _gradHeaders(token: tok),
-        body: jsonEncode({'product_id': pid, 'quantity': qty}),
-      );
-
-      final ok = r.statusCode >= 200 && r.statusCode < 300;
-      if (!ok) {
-        String msg = 'Gagal menambahkan ke keranjang';
-        try {
-          final j = jsonDecode(r.body);
-          if (j is Map && j['message'] != null) msg = '${j['message']}';
-        } catch (_) {}
-        _snack(msg);
-        return;
-      }
-      _snack('Produk masuk keranjang');
-    } finally {
-      if (mounted) setState(() => _loading = false);
-    }
-  }
-
-  void _snack(String s) {
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(s)));
-  }
-
   @override
   Widget build(BuildContext context) {
     final p = _p;
     final stok = _stok();
     final harga = _harga();
-    final img = _img();
+    final img = _resolveImageUrl(_imgRaw());
+
+    final active = _isActiveFromMap(p);
+
+    final distanceText = (_distanceM == null)
+        ? '-'
+        : fmtDistance((_distanceM ?? 0).toDouble());
 
     return Scaffold(
       backgroundColor: const Color(0xFFF6F3FF),
@@ -190,6 +372,15 @@ class _UserProductDetailPageState extends State<UserProductDetailPage> {
           ),
         ],
       ),
+      bottomNavigationBar: _StickyTokoBar(
+        loading: _loadingToko,
+        tokoName: _tokoName,
+        tokoAlamat: _tokoAlamat,
+        tokoStatus: _tokoStatus,
+        distanceText: distanceText,
+        error: _tokoError,
+        onRefresh: _loadTokoAndDistance,
+      ),
       body: _loadingDetail
           ? const Center(child: CircularProgressIndicator())
           : (p == null)
@@ -197,6 +388,36 @@ class _UserProductDetailPageState extends State<UserProductDetailPage> {
           : ListView(
               padding: const EdgeInsets.all(16),
               children: [
+                if (!active) ...[
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFFFFBEB),
+                      borderRadius: BorderRadius.circular(18),
+                      border: Border.all(color: const Color(0xFFFDE68A)),
+                    ),
+                    child: const Row(
+                      children: [
+                        Icon(
+                          Icons.warning_amber_rounded,
+                          color: Color(0xFFB45309),
+                        ),
+                        SizedBox(width: 10),
+                        Expanded(
+                          child: Text(
+                            'Produk NONAKTIF (tidak bisa dibeli)',
+                            style: TextStyle(
+                              fontWeight: FontWeight.w900,
+                              color: Color(0xFFB45309),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                ],
+
                 _HeroCard(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -249,6 +470,13 @@ class _UserProductDetailPageState extends State<UserProductDetailPage> {
                                   '${p['category_name'] ?? p['categoryName']}',
                               tone: _Tone.neutral,
                             ),
+                          _Pill(
+                            icon: active
+                                ? Icons.check_circle_outline
+                                : Icons.block,
+                            label: active ? 'AKTIF' : 'NONAKTIF',
+                            tone: active ? _Tone.good : _Tone.bad,
+                          ),
                         ],
                       ),
                       const SizedBox(height: 12),
@@ -324,7 +552,7 @@ class _UserProductDetailPageState extends State<UserProductDetailPage> {
                         children: [
                           Expanded(
                             child: ElevatedButton.icon(
-                              onPressed: (_loading || stok <= 0)
+                              onPressed: (_loading || stok <= 0 || !active)
                                   ? null
                                   : () async {
                                       await _addToCart(qty: _qty);
@@ -365,7 +593,7 @@ class _UserProductDetailPageState extends State<UserProductDetailPage> {
                           const SizedBox(width: 10),
                           Expanded(
                             child: OutlinedButton.icon(
-                              onPressed: (_loading || stok <= 0)
+                              onPressed: (_loading || stok <= 0 || !active)
                                   ? null
                                   : () async {
                                       await _addToCart(qty: _qty);
@@ -375,7 +603,6 @@ class _UserProductDetailPageState extends State<UserProductDetailPage> {
                                         MaterialPageRoute(
                                           builder: (_) => UserCheckoutPage(
                                             user: widget.user,
-                                            // checkout dari cart (backend akan baca cart user)
                                             prefillKurir: 'kurirku',
                                           ),
                                         ),
@@ -402,11 +629,123 @@ class _UserProductDetailPageState extends State<UserProductDetailPage> {
                           ),
                         ],
                       ),
+                      if (!active) ...[
+                        const SizedBox(height: 10),
+                        const Text(
+                          'Produk NONAKTIF, tombol pembelian dinonaktifkan.',
+                          style: TextStyle(
+                            color: Color(0xFFB91C1C),
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                      ],
                     ],
                   ),
                 ),
+                const SizedBox(height: 12),
+                const SizedBox(height: 72), // ruang untuk sticky bar
               ],
             ),
+    );
+  }
+}
+
+class _StickyTokoBar extends StatelessWidget {
+  final bool loading;
+  final String? tokoName;
+  final String? tokoAlamat;
+  final String? tokoStatus;
+  final String distanceText;
+  final String? error;
+  final VoidCallback onRefresh;
+
+  const _StickyTokoBar({
+    required this.loading,
+    required this.tokoName,
+    required this.tokoAlamat,
+    required this.tokoStatus,
+    required this.distanceText,
+    required this.error,
+    required this.onRefresh,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final name = (tokoName ?? '').trim();
+    final alamat = (tokoAlamat ?? '').trim();
+    final status = (tokoStatus ?? '').trim();
+
+    return SafeArea(
+      top: false,
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(14, 10, 14, 12),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          border: Border(top: BorderSide(color: const Color(0xFFEDE9FE))),
+          boxShadow: const [
+            BoxShadow(
+              blurRadius: 18,
+              offset: Offset(0, -10),
+              color: Color(0x14000000),
+            ),
+          ],
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 42,
+              height: 42,
+              decoration: BoxDecoration(
+                color: const Color(0xFFF5F3FF),
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: const Color(0xFFE9D5FF)),
+              ),
+              child: const Icon(
+                Icons.storefront_outlined,
+                color: Color(0xFF6D28D9),
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    name.isEmpty ? 'Informasi toko' : name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontWeight: FontWeight.w900),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    (error != null && error!.trim().isNotEmpty)
+                        ? error!
+                        : '${alamat.isEmpty ? '-' : alamat} • Jarak: $distanceText'
+                              '${status.isNotEmpty ? " • $status" : ""}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: (error != null) ? Colors.red : Colors.black54,
+                      fontWeight: FontWeight.w700,
+                      fontSize: 12,
+                    ),
+                  ),
+                  if (loading) ...[
+                    const SizedBox(height: 6),
+                    const LinearProgressIndicator(minHeight: 3),
+                  ],
+                ],
+              ),
+            ),
+            IconButton(
+              tooltip: 'Refresh jarak',
+              onPressed: loading ? null : onRefresh,
+              icon: const Icon(Icons.refresh, color: Color(0xFF6D28D9)),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

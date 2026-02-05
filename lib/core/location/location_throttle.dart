@@ -9,7 +9,7 @@ class LocationThrottle {
     required double newLng,
     required DateTime now,
     int minSeconds = 15,
-    double minDistanceM = 20,
+    double minDistanceM = 1000,
   }) {
     final dt = now.difference(lastSentAt).inSeconds;
     if (dt >= minSeconds) return true;

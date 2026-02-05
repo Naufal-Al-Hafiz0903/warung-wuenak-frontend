@@ -30,6 +30,9 @@ class AdminFieldSpec {
   final List<String>? options; // dropdown
   final String? initialDropdownValue;
 
+  /// ✅ NEW: prefill text untuk edit
+  final String? initialTextValue;
+
   final int maxLines; // multiline/text
 
   // ✅ image options
@@ -56,6 +59,7 @@ class AdminFieldSpec {
     this.flex = 1,
     this.options,
     this.initialDropdownValue,
+    this.initialTextValue, // ✅ NEW
     this.maxLines = 1,
     this.validator,
 
@@ -72,6 +76,7 @@ class AdminFieldSpec {
     required String label,
     bool required = false,
     int flex = 1,
+    String? initialValue, // ✅ NEW
     String? Function(String? v)? validator,
   }) {
     return AdminFieldSpec(
@@ -80,6 +85,7 @@ class AdminFieldSpec {
       type: AdminFieldType.text,
       required: required,
       flex: flex,
+      initialTextValue: initialValue, // ✅ NEW
       validator: validator,
     );
   }
@@ -89,6 +95,7 @@ class AdminFieldSpec {
     required String label,
     bool required = false,
     int flex = 1,
+    String? initialValue, // ✅ NEW (opsional)
     String? Function(String? v)? validator,
   }) {
     return AdminFieldSpec(
@@ -97,6 +104,7 @@ class AdminFieldSpec {
       type: AdminFieldType.password,
       required: required,
       flex: flex,
+      initialTextValue: initialValue, // ✅ NEW
       validator: validator,
     );
   }
@@ -107,6 +115,7 @@ class AdminFieldSpec {
     bool required = false,
     int flex = 1,
     int maxLines = 3,
+    String? initialValue, // ✅ NEW
     String? Function(String? v)? validator,
   }) {
     return AdminFieldSpec(
@@ -116,6 +125,7 @@ class AdminFieldSpec {
       required: required,
       flex: flex,
       maxLines: maxLines,
+      initialTextValue: initialValue, // ✅ NEW
       validator: validator,
     );
   }
@@ -125,6 +135,7 @@ class AdminFieldSpec {
     required String label,
     bool required = false,
     int flex = 1,
+    String? initialValue, // ✅ NEW
     String? Function(String? v)? validator,
   }) {
     return AdminFieldSpec(
@@ -133,6 +144,7 @@ class AdminFieldSpec {
       type: AdminFieldType.intNum,
       required: required,
       flex: flex,
+      initialTextValue: initialValue, // ✅ NEW
       validator: validator,
     );
   }
@@ -142,6 +154,7 @@ class AdminFieldSpec {
     required String label,
     bool required = false,
     int flex = 1,
+    String? initialValue, // ✅ NEW
     String? Function(String? v)? validator,
   }) {
     return AdminFieldSpec(
@@ -150,6 +163,7 @@ class AdminFieldSpec {
       type: AdminFieldType.doubleNum,
       required: required,
       flex: flex,
+      initialTextValue: initialValue, // ✅ NEW
       validator: validator,
     );
   }
@@ -175,7 +189,7 @@ class AdminFieldSpec {
     );
   }
 
-  /// ✅ NEW (Image)
+  /// ✅ Image
   factory AdminFieldSpec.image(
     String key, {
     required String label,
@@ -268,7 +282,10 @@ class _AdminEntityAddDialogState extends State<AdminEntityAddDialog> {
       } else if (f.type == AdminFieldType.image) {
         _imageValues[f.key] = null;
       } else {
-        _controllers[f.key] = TextEditingController();
+        // ✅ NEW: controller prefill untuk edit
+        _controllers[f.key] = TextEditingController(
+          text: f.initialTextValue ?? '',
+        );
       }
     }
 
@@ -334,7 +351,6 @@ class _AdminEntityAddDialogState extends State<AdminEntityAddDialog> {
   // Validators & parsers
   // =========================
   String? _defaultValidator(AdminFieldSpec f, String? v) {
-    // required checks:
     if (f.required) {
       if (f.type == AdminFieldType.password) {
         if (v == null || v.isEmpty) return 'Wajib diisi';
@@ -345,7 +361,6 @@ class _AdminEntityAddDialogState extends State<AdminEntityAddDialog> {
       }
     }
 
-    // numeric checks:
     if (f.type == AdminFieldType.intNum) {
       final s = (v ?? '').trim();
       if (s.isEmpty) return f.required ? 'Wajib diisi' : null;
@@ -368,14 +383,8 @@ class _AdminEntityAddDialogState extends State<AdminEntityAddDialog> {
   }
 
   dynamic _parseValue(AdminFieldSpec f, String? raw) {
-    if (f.type == AdminFieldType.dropdown) {
-      return raw;
-    }
-
-    if (f.type == AdminFieldType.password) {
-      // keep raw (no trim) to match behavior
-      return raw ?? '';
-    }
+    if (f.type == AdminFieldType.dropdown) return raw;
+    if (f.type == AdminFieldType.password) return raw ?? '';
 
     final s = (raw ?? '').trim();
 
@@ -399,7 +408,7 @@ class _AdminEntityAddDialogState extends State<AdminEntityAddDialog> {
   }
 
   // =========================
-  // Image helpers (dipisah)
+  // Image helpers
   // =========================
   bool _isAllowedImageExt(String path) {
     final p = path.toLowerCase();
@@ -441,7 +450,6 @@ class _AdminEntityAddDialogState extends State<AdminEntityAddDialog> {
       return null;
     }
 
-    // ✅ Max size enforced
     if (len > f.maxImageBytes) {
       final mb = (f.maxImageBytes / (1024 * 1024)).toStringAsFixed(0);
       if (mounted) {
@@ -464,19 +472,17 @@ class _AdminEntityAddDialogState extends State<AdminEntityAddDialog> {
     final valid = _formKey.currentState?.validate() ?? false;
     if (!valid) return;
 
-    // build values map
     final Map<String, dynamic> values = {};
     for (final f in widget.schema.fields) {
       if (f.type == AdminFieldType.dropdown) {
         values[f.key] = _dropdownValues[f.key];
       } else if (f.type == AdminFieldType.image) {
-        values[f.key] = _imageValues[f.key]; // File?
+        values[f.key] = _imageValues[f.key];
       } else {
         values[f.key] = _parseValue(f, _controllers[f.key]?.text);
       }
     }
 
-    // build group rows
     final List<Map<String, dynamic>> groupRows = [];
     final g = widget.schema.group;
     if (g != null) {
@@ -726,7 +732,7 @@ class _AdminEntityAddDialogState extends State<AdminEntityAddDialog> {
 }
 
 // ============================================================
-// ✅ Widget terpisah: Image Form Field (biar error tampil proper lewat Form)
+// Image Form Field
 // ============================================================
 class _AdminImageFormField extends FormField<File?> {
   _AdminImageFormField({
@@ -755,9 +761,6 @@ class _AdminImageFormField extends FormField<File?> {
                  onTap: enabled
                      ? () async {
                          await onPick();
-                         // sinkronkan value form field dgn state luar:
-                         // (FormField builder dipanggil ulang oleh parent setState)
-                         // kita set ulang agar errorText hilang setelah pilih.
                          state.didChange(state.value);
                        }
                      : null,

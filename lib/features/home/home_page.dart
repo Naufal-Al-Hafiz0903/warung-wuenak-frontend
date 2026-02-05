@@ -1,9 +1,13 @@
 import 'package:flutter/material.dart';
+
 import '../../models/category_model.dart';
 import '../../models/product_model.dart';
 import '../../models/order_model.dart';
+
 import '../../services/category_service.dart';
-import '../../seller/data/product_service.dart';
+import '../../services/product_service.dart'; // ✅ pakai service USER yang hit endpoint /products/listProduct
+import '../../services/me_location_service.dart'; // ✅ kirim lokasi user dulu
+
 import '../../seller/data/order_service.dart';
 
 class HomePage extends StatefulWidget {
@@ -21,6 +25,8 @@ class _HomePageState extends State<HomePage> {
   late final String email;
 
   bool loading = true;
+  String? loadError; // ✅ tampilkan error yang relevan bila lokasi/produk gagal
+
   String q = '';
   int? selectedCategoryId;
 
@@ -34,30 +40,47 @@ class _HomePageState extends State<HomePage> {
     name = widget.user["name"] ?? "-";
     email = widget.user["email"] ?? "-";
 
-    // dashboard user: load data
     _load();
   }
 
   Future<void> _load() async {
     if (role != 'user') return;
 
-    setState(() => loading = true);
-
-    final c = await CategoryService.fetchCategories();
-    final p = await ProductService.fetchProducts();
-
     setState(() {
-      categories = c;
-      products = p;
-      loading = false;
+      loading = true;
+      loadError = null;
     });
+
+    try {
+      // ✅ WAJIB: simpan lokasi user dulu agar backend bisa filter jarak 1.2 km
+      final locRes = await MeLocationService.captureAndSend();
+      if (locRes.ok != true) {
+        throw Exception(locRes.message);
+      }
+
+      final c = await CategoryService.fetchCategories();
+
+      // produk diambil dari backend (backend akan memfilter <= 1.2km)
+      final p = await ProductService.fetchProducts();
+
+      setState(() {
+        categories = c;
+        products = p;
+        loading = false;
+      });
+    } catch (e) {
+      setState(() {
+        loading = false;
+        loadError = "Gagal memuat produk: $e";
+      });
+    }
   }
 
   List<ProductModel> get _filteredProducts {
     Iterable<ProductModel> list = products;
 
     // hanya produk aktif
-    list = list.where((p) => (p.status.toLowerCase() == 'aktif'));
+    list = list.where((p) => ((p.status ?? '').toLowerCase() == 'aktif'));
 
     // filter kategori
     if (selectedCategoryId != null && selectedCategoryId != 0) {
@@ -78,7 +101,6 @@ class _HomePageState extends State<HomePage> {
   }
 
   String _money(double v) {
-    // simpel dulu (tanpa package intl)
     final s = v.toStringAsFixed(0);
     return "Rp $s";
   }
@@ -107,12 +129,22 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  // ===============================
-  // DASHBOARD USER (BARU)
-  // ===============================
   Widget _userDashboard() {
     if (loading) {
       return const Center(child: CircularProgressIndicator());
+    }
+
+    if (loadError != null) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Text(
+            loadError!,
+            textAlign: TextAlign.center,
+            style: const TextStyle(fontWeight: FontWeight.w600),
+          ),
+        ),
+      );
     }
 
     final list = _filteredProducts;
@@ -130,7 +162,6 @@ class _HomePageState extends State<HomePage> {
           Text(email, style: const TextStyle(color: Colors.black54)),
           const SizedBox(height: 14),
 
-          // SEARCH
           TextField(
             decoration: InputDecoration(
               hintText: "Cari produk / kategori...",
@@ -144,7 +175,6 @@ class _HomePageState extends State<HomePage> {
           ),
           const SizedBox(height: 12),
 
-          // FILTER KATEGORI
           Row(
             children: [
               const Text("Kategori: "),
@@ -177,14 +207,12 @@ class _HomePageState extends State<HomePage> {
           ),
           const SizedBox(height: 14),
 
-          // INFO JUMLAH
           Text(
             "Produk ditemukan: ${list.length}",
             style: const TextStyle(color: Colors.black54),
           ),
           const SizedBox(height: 10),
 
-          // LIST PRODUK
           if (list.isEmpty)
             const Padding(
               padding: EdgeInsets.only(top: 40),
@@ -205,7 +233,6 @@ class _HomePageState extends State<HomePage> {
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // thumbnail sederhana (placeholder)
             Container(
               width: 56,
               height: 56,
@@ -269,9 +296,6 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  // ===============================
-  // WIDGET BERDASARKAN ROLE (TETAP ADA)
-  // ===============================
   Widget _roleWidget(String role) {
     switch (role) {
       case "admin":
@@ -279,7 +303,7 @@ class _HomePageState extends State<HomePage> {
       case "penjual":
         return _penjualView();
       default:
-        return _userView(); // tidak dipakai lagi kalau role user karena sudah dashboard
+        return _userView();
     }
   }
 
@@ -291,7 +315,7 @@ class _HomePageState extends State<HomePage> {
         child: const Padding(
           padding: EdgeInsets.all(16),
           child: Text(
-            "🔴 LOGIN SEBAGAI ADMIN\n\n"
+            "LOGIN SEBAGAI ADMIN\n\n"
             "• Kelola semua user\n"
             "• Kelola toko\n"
             "• Kelola produk\n"
@@ -311,7 +335,7 @@ class _HomePageState extends State<HomePage> {
         child: const Padding(
           padding: EdgeInsets.all(16),
           child: Text(
-            "🟠 LOGIN SEBAGAI PENJUAL\n\n"
+            "LOGIN SEBAGAI PENJUAL\n\n"
             "• Kelola produk sendiri\n"
             "• Lihat pesanan\n"
             "• Proses pengiriman",
@@ -330,7 +354,7 @@ class _HomePageState extends State<HomePage> {
         child: const Padding(
           padding: EdgeInsets.all(16),
           child: Text(
-            "🟢 LOGIN SEBAGAI USER\n\n"
+            "LOGIN SEBAGAI USER\n\n"
             "• Lihat produk\n"
             "• Belanja\n"
             "• Lihat status pesanan",
@@ -353,9 +377,6 @@ class _HomePageState extends State<HomePage> {
   }
 }
 
-// =====================================================
-// HALAMAN PESANAN SAYA (TEMPLATE, cepat jalan)
-// =====================================================
 class UserOrdersPage extends StatefulWidget {
   const UserOrdersPage({super.key});
 

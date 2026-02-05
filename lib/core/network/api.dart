@@ -4,19 +4,9 @@ import 'package:http/http.dart' as http;
 import '../config/app_config.dart';
 
 class Api {
-  // =====================================================
-  // BASE URL (SPRING BOOT)
-  // =====================================================
   static const String baseUrl = AppConfig.baseUrl;
-
-  // =====================================================
-  // HTTP CLIENT
-  // =====================================================
   static final http.Client _client = http.Client();
 
-  // =====================================================
-  // HEADER DEFAULT
-  // =====================================================
   static const Map<String, String> _headers = {
     "Content-Type": "application/json",
     "Accept": "application/json",
@@ -39,16 +29,14 @@ class Api {
     return 'user';
   }
 
-  // =====================================================
   // REGISTER
-  // =====================================================
   static Future<Map<String, dynamic>> register({
     required String name,
     required String nomorUser,
     required String alamatUser,
     required String email,
     required String password,
-    String level = 'user', // ✅ tambahan (default pembeli)
+    String level = 'user',
   }) async {
     try {
       final uri = _uri("/auth/register");
@@ -63,7 +51,7 @@ class Api {
               "alamat_user": alamatUser,
               "email": email,
               "password": password,
-              "level": _normalizeRole(level), // ✅ KIRIM ROLE
+              "level": _normalizeRole(level),
             }),
           )
           .timeout(_timeout15);
@@ -80,9 +68,7 @@ class Api {
     }
   }
 
-  // =====================================================
   // LOGIN
-  // =====================================================
   static Future<Map<String, dynamic>> login({
     required String email,
     required String password,
@@ -110,9 +96,40 @@ class Api {
     }
   }
 
-  // =====================================================
-  // CHECK TOKEN (JWT)
-  // =====================================================
+  // CHANGE PASSWORD ✅
+  static Future<Map<String, dynamic>> changePassword({
+    required String email,
+    required String oldPassword,
+    required String newPassword,
+  }) async {
+    try {
+      final uri = _uri("/auth/change-password");
+
+      final response = await _client
+          .post(
+            uri,
+            headers: _headers,
+            body: jsonEncode({
+              "email": email,
+              "old_password": oldPassword,
+              "new_password": newPassword,
+            }),
+          )
+          .timeout(_timeout15);
+
+      return _handleResponse(response, uri);
+    } on SocketException {
+      return {"ok": false, "message": "Server tidak dapat dijangkau"};
+    } on HttpException {
+      return {"ok": false, "message": "Kesalahan HTTP"};
+    } on FormatException {
+      return {"ok": false, "message": "Response server tidak valid"};
+    } catch (e) {
+      return {"ok": false, "message": "Change password error: $e"};
+    }
+  }
+
+  // CHECK TOKEN
   static Future<Map<String, dynamic>> checkToken(String token) async {
     final candidates = <String>[
       "/auth/check",
@@ -137,9 +154,7 @@ class Api {
             ? data["statusCode"] as int
             : response.statusCode;
 
-        if (sc == 404 || sc == 405) {
-          continue;
-        }
+        if (sc == 404 || sc == 405) continue;
 
         if (data["message"] == "Server mengirim HTML (bukan JSON)." &&
             (sc == 404 || sc == 405)) {
@@ -164,9 +179,7 @@ class Api {
         };
   }
 
-  // =====================================================
-  // RESPONSE HANDLER (GLOBAL)
-  // =====================================================
+  // RESPONSE HANDLER
   static Map<String, dynamic> _handleResponse(http.Response response, Uri uri) {
     final body = response.body;
     final contentType = response.headers['content-type'] ?? "";

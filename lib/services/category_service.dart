@@ -5,7 +5,6 @@ import 'user_http.dart';
 class CategoryService {
   static const String _base = 'categories';
 
-  // ===== simple cache (biar cepat & tidak spam server) =====
   static const Duration _ttl = Duration(seconds: 30);
 
   static List<CategoryModel>? _cacheUser;
@@ -32,7 +31,6 @@ class CategoryService {
     return [];
   }
 
-  /// USER (pakai UserHttp)
   static Future<List<CategoryModel>> fetchCategories({
     bool forceRefresh = false,
   }) async {
@@ -52,11 +50,9 @@ class CategoryService {
       return list;
     }
 
-    // fallback: kalau request gagal, minimal balikin cache lama kalau ada
     return _cacheUser ?? <CategoryModel>[];
   }
 
-  /// ADMIN (pakai AdminHttp), fallback ke UserHttp jika perlu
   static Future<List<CategoryModel>> fetchCategoriesAdmin({
     bool forceRefresh = false,
   }) async {
@@ -64,7 +60,6 @@ class CategoryService {
       return _cacheAdmin!;
     }
 
-    // 1) coba pakai admin token
     final resAdmin = await AdminHttp.getJson(_base);
 
     if (resAdmin['ok'] == true) {
@@ -77,7 +72,6 @@ class CategoryService {
       return list;
     }
 
-    // 2) fallback ke user token (untuk kasus backend menerima user token juga)
     final resUser = await UserHttp.getJson(_base);
     if (resUser['ok'] == true) {
       final list = _extractList(resUser)
@@ -92,26 +86,29 @@ class CategoryService {
     return _cacheAdmin ?? <CategoryModel>[];
   }
 
-  /// CREATE kategori (ADMIN) -> kirim JSON (fix error content-type)
+  static Future<Map<String, dynamic>> createResult({
+    required String name,
+    required String description,
+  }) async {
+    final body = <String, dynamic>{
+      'category_name': name.trim(),
+      'description': description.trim(),
+    };
+
+    final res = await AdminHttp.postJson('$_base/create', body);
+
+    if (res['ok'] == true) invalidateCache();
+    return res;
+  }
+
   static Future<bool> create({
     required String name,
     required String description,
-    int? parentId,
   }) async {
-    final body = <String, dynamic>{
-      'category_name': name,
-      'description': description,
-    };
-    if (parentId != null && parentId > 0) body['parent_id'] = parentId;
-
-    final res = await AdminHttp.postJson('$_base/create', body);
-    final ok = res['ok'] == true;
-
-    if (ok) invalidateCache();
-    return ok;
+    final res = await createResult(name: name, description: description);
+    return res['ok'] == true;
   }
 
-  /// DELETE kategori (ADMIN) -> kirim JSON (fix error content-type)
   static Future<bool> delete(int categoryId) async {
     final res = await AdminHttp.postJson('$_base/delete', {
       'category_id': categoryId,

@@ -192,6 +192,14 @@ class SellerLayout extends StatelessWidget {
                     },
                   ),
                   ListTile(
+                    leading: const Icon(Icons.category),
+                    title: const Text("Kategori"),
+                    onTap: () {
+                      Navigator.pop(context);
+                      Navigator.pushNamed(context, '/seller/categories');
+                    },
+                  ),
+                  ListTile(
                     leading: const Icon(Icons.receipt_long),
                     title: const Text("Pesanan"),
                     onTap: () {

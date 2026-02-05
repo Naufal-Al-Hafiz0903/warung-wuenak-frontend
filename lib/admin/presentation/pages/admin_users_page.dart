@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '/models/user_model.dart';
 import '../../../seller/data/user_service.dart';
+import '../../data/user_service_admin.dart';
 import '../widgets/admin_add_dialog.dart';
 import '../widgets/admin_db_table.dart';
 import '../widgets/admin_ui.dart';
@@ -305,6 +306,165 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
     if (ok) _refresh();
   }
 
+  // ============================================================
+  // ✅ NEW: Reset Password Dialog (Admin)
+  // ============================================================
+  Future<void> _openResetPasswordDialog(UserModel u) async {
+    final passC = TextEditingController();
+    final confirmC = TextEditingController();
+
+    bool success = false;
+
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) {
+        bool saving = false;
+        bool ob1 = true;
+        bool ob2 = true;
+
+        void snackLocal(String msg, {Color? bg}) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(msg),
+              backgroundColor: bg,
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+        }
+
+        Future<void> submit() async {
+          if (saving) return;
+
+          final pass = passC.text;
+          final conf = confirmC.text;
+
+          if (pass.isEmpty || conf.isEmpty) {
+            snackLocal(
+              "Password baru & konfirmasi wajib diisi",
+              bg: Colors.red,
+            );
+            return;
+          }
+          if (pass.length < 6) {
+            snackLocal("Password baru minimal 6 karakter", bg: Colors.red);
+            return;
+          }
+          if (pass != conf) {
+            snackLocal("Konfirmasi password tidak sama", bg: Colors.red);
+            return;
+          }
+
+          saving = true;
+          (ctx as Element).markNeedsBuild();
+
+          final res = await UserServiceAdmin.resetPasswordByAdmin(
+            userId: u.userId,
+            newPassword: pass,
+          );
+
+          saving = false;
+          (ctx as Element).markNeedsBuild();
+
+          final ok = res['ok'] == true;
+          final msg = (res['message'] ?? (ok ? 'Berhasil' : 'Gagal'))
+              .toString();
+
+          if (ok) {
+            success = true;
+            snackLocal(
+              "Password user '${u.name}' berhasil direset ✅",
+              bg: Colors.green,
+            );
+            Navigator.pop(ctx);
+          } else {
+            snackLocal(msg, bg: Colors.red);
+          }
+        }
+
+        return StatefulBuilder(
+          builder: (ctx2, setSt) => AlertDialog(
+            title: Text("Reset Password: ${u.name}"),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                  controller: passC,
+                  obscureText: ob1,
+                  decoration: InputDecoration(
+                    labelText: "Password Baru",
+                    prefixIcon: const Icon(Icons.lock_reset_rounded),
+                    suffixIcon: IconButton(
+                      onPressed: saving ? null : () => setSt(() => ob1 = !ob1),
+                      icon: Icon(
+                        ob1
+                            ? Icons.visibility_rounded
+                            : Icons.visibility_off_rounded,
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: confirmC,
+                  obscureText: ob2,
+                  decoration: InputDecoration(
+                    labelText: "Konfirmasi Password Baru",
+                    prefixIcon: const Icon(Icons.verified_user_outlined),
+                    suffixIcon: IconButton(
+                      onPressed: saving ? null : () => setSt(() => ob2 = !ob2),
+                      icon: Icon(
+                        ob2
+                            ? Icons.visibility_rounded
+                            : Icons.visibility_off_rounded,
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                const Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    "Minimal 6 karakter.",
+                    style: TextStyle(
+                      color: Colors.black54,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: saving ? null : () => Navigator.pop(ctx2),
+                child: const Text("Batal"),
+              ),
+              ElevatedButton.icon(
+                onPressed: saving ? null : submit,
+                icon: saving
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.lock_reset_rounded),
+                label: Text(saving ? "Memproses..." : "Reset"),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+
+    passC.dispose();
+    confirmC.dispose();
+
+    if (success) {
+      // tidak wajib refresh karena data user tidak berubah, tapi aman:
+      // _refresh();
+    }
+  }
+
   Widget _table(List<UserModel> list) {
     const double wId = 110;
     const double wName = 200;
@@ -314,6 +474,7 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
     const double wSaldo = 120;
     const double wLevel = 140;
     const double wStatus = 170;
+    const double wAksi = 150;
 
     return AdminDbTable<UserModel>(
       tableName: 'users',
@@ -340,6 +501,9 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
         ),
         AdminDbColumn(title: 'level', columnName: 'level', width: wLevel),
         AdminDbColumn(title: 'status', columnName: 'status', width: wStatus),
+
+        // ✅ NEW column
+        AdminDbColumn(title: 'aksi', columnName: 'aksi', width: wAksi),
       ],
       items: list,
       rowsHeight: 360,
@@ -386,6 +550,16 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
               ),
             ),
           ),
+
+          // ✅ NEW aksi cell
+          Align(
+            alignment: Alignment.centerLeft,
+            child: TextButton.icon(
+              onPressed: () => _openResetPasswordDialog(u),
+              icon: const Icon(Icons.lock_reset_rounded),
+              label: const Text("Reset"),
+            ),
+          ),
         ];
       },
     );
@@ -398,8 +572,9 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
     return FutureBuilder<List<UserModel>>(
       future: _future,
       builder: (context, snap) {
-        if (!snap.hasData)
+        if (!snap.hasData) {
           return const Center(child: CircularProgressIndicator());
+        }
 
         final users = snap.data ?? [];
         final filtered = _applyFilter(users);
@@ -409,7 +584,6 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
           child: ListView(
             padding: const EdgeInsets.all(16),
             children: [
-              // Toolbar seragam
               Row(
                 children: [
                   Expanded(
@@ -423,7 +597,6 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
                       filterActive: _statusFilter != 'semua',
                     ),
                   ),
-                  // icon putih overlay (biar tombol bulat ada icon)
                   const SizedBox(width: 0),
                 ],
               ),

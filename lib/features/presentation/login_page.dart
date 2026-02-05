@@ -3,6 +3,8 @@ import '../../core/network/api.dart';
 import '../../features/data/auth_service.dart';
 import 'register_page.dart';
 
+import 'package:warung_wuenak/services/me_location_service.dart';
+
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
 
@@ -55,11 +57,44 @@ class _LoginPageState extends State<LoginPage> {
     );
   }
 
+  Future<void> _captureLocationAfterLogin() async {
+    try {
+      final r = await MeLocationService.captureAndSend();
+      if (!mounted) return;
+
+      if (r.ok) {
+        final c = (r.city ?? '').trim();
+        final area = r.areaKm2;
+        final radius = r.radiusMMax;
+
+        if (c.isNotEmpty && area != null && radius != null) {
+          final km = (radius / 1000).toStringAsFixed(1);
+          _snack(
+            'Lokasi: $c ✅ | Luas± ${area.toStringAsFixed(2)} km² | Radius max: $km km',
+            bg: Colors.green,
+          );
+        } else if (c.isNotEmpty) {
+          _snack('Lokasi terdeteksi: $c ✅', bg: Colors.green);
+        } else {
+          _snack(
+            'Koordinat tersimpan, kota tidak terdeteksi',
+            bg: Colors.orange,
+          );
+        }
+      } else {
+        _snack('Gagal simpan lokasi: ${r.message}', bg: Colors.orange);
+      }
+    } catch (e) {
+      if (!mounted) return;
+      _snack('Lokasi tidak bisa diambil: $e', bg: Colors.orange);
+    }
+  }
+
   Future<void> doLogin() async {
     if (loading) return;
 
     final email = emailC.text.trim();
-    final pass = passC.text; // password jangan di-trim
+    final pass = passC.text;
 
     if (email.isEmpty || pass.isEmpty) {
       _snack("Email dan password wajib diisi");
@@ -68,7 +103,6 @@ class _LoginPageState extends State<LoginPage> {
 
     setState(() => loading = true);
 
-    // ✅ login via AuthService -> simpan token + user_data + level
     final res = await AuthService.login(email, pass);
 
     if (!mounted) return;
@@ -78,7 +112,6 @@ class _LoginPageState extends State<LoginPage> {
       final String token = res["token"].toString();
       final bool isJwt = token.split('.').length == 3;
 
-      // ✅ Validasi JWT (opsional tapi kamu pakai)
       final check = await Api.checkToken(token);
       if (!mounted) return;
 
@@ -99,9 +132,10 @@ class _LoginPageState extends State<LoginPage> {
         bg: isJwt ? Colors.green : Colors.orange,
       );
 
+      await _captureLocationAfterLogin();
+
       if (!mounted) return;
 
-      // ✅ routing berdasarkan role dari server (bukan pilihan user)
       if (level == "penjual") {
         Navigator.pushNamedAndRemoveUntil(context, '/seller', (_) => false);
       } else if (level == "admin") {
@@ -291,6 +325,13 @@ class _LoginPageState extends State<LoginPage> {
                               "Belum punya akun? Register",
                               style: TextStyle(fontWeight: FontWeight.w700),
                             ),
+                          ),
+                          TextButton(
+                            onPressed: () => Navigator.pushNamed(
+                              context,
+                              '/change-password',
+                            ),
+                            child: const Text('Ganti Password'),
                           ),
                         ],
                       ),

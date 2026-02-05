@@ -76,7 +76,6 @@ class _UserHomePageState extends State<UserHomePage> {
       animation: c,
       builder: (_, __) {
         return Scaffold(
-          // ✅ DRAWER DIHAPUS → hamburger kiri hilang
           appBar: AppBar(
             title: const Text("Warung Wuenak"),
             actions: [
@@ -117,7 +116,8 @@ class _UserHomePageState extends State<UserHomePage> {
                       const SizedBox(height: 12),
                       CategoryFilterChips(
                         categories: c.categories,
-                        selectedId: c.selectedCategoryId ?? -1,
+                        // ✅ FIX terkait tugas UI filter
+                        selectedId: c.selectedCategoryId ?? 0,
                         onSelected: (id) => c.onSelectCategory(id),
                       ),
                       const SizedBox(height: 14),

@@ -6,7 +6,15 @@ class ProductCard extends StatefulWidget {
   final ProductModel p;
   final VoidCallback? onTap;
 
-  const ProductCard({super.key, required this.p, this.onTap});
+  /// ✅ blok tap ke detail kalau produk nonaktif
+  final bool blockTapWhenInactive;
+
+  const ProductCard({
+    super.key,
+    required this.p,
+    this.onTap,
+    this.blockTapWhenInactive = true,
+  });
 
   @override
   State<ProductCard> createState() => _ProductCardState();
@@ -16,17 +24,27 @@ class _ProductCardState extends State<ProductCard> {
   bool _busy = false;
 
   bool get _isActive {
-    final s = (widget.p.status ?? '').toString().trim().toLowerCase();
-    // default: kalau status kosong, anggap aktif (biar tidak mematikan semua UI)
-    if (s.isEmpty) return true;
-    return s == 'aktif';
+    final raw = widget.p.status;
+    if (raw == null) return true;
+
+    final s = raw.toString().trim().toLowerCase();
+    if (s.isEmpty || s == 'null') return true;
+
+    // aktif vs nonaktif
+    if (s == 'aktif') return true;
+    if (s == 'nonaktif' || s == 'non-aktif' || s == 'inactive') return false;
+
+    // default aman: anggap aktif kalau format status aneh
+    return true;
   }
 
   String _resolveImageUrl(String raw) {
     final s = raw.trim();
     if (s.isEmpty) return '';
     if (s.startsWith('http://') || s.startsWith('https://')) return s;
-    final base = UserHttp.baseUrl; // sudah punya trailing slash
+
+    var base = UserHttp.baseUrl;
+    if (!base.endsWith('/')) base = '$base/';
     final cleaned = s.startsWith('/') ? s.substring(1) : s;
     return '$base$cleaned';
   }
@@ -58,7 +76,7 @@ class _ProductCardState extends State<ProductCard> {
     if (_busy) return;
 
     if (!_isActive) {
-      _snack('Produk nonaktif (tidak bisa ditambahkan)');
+      _snack('Produk NONAKTIF (tidak bisa ditambahkan)');
       return;
     }
 
@@ -75,7 +93,6 @@ class _ProductCardState extends State<ProductCard> {
         return;
       }
 
-      // ✅ ambil error paling jelas
       final msg =
           (res['detail'] ?? res['message'] ?? 'Gagal menambah ke keranjang')
               .toString();
@@ -83,6 +100,17 @@ class _ProductCardState extends State<ProductCard> {
     } finally {
       if (mounted) setState(() => _busy = false);
     }
+  }
+
+  void _handleTap() {
+    if (widget.onTap == null) return;
+
+    if (widget.blockTapWhenInactive && !_isActive) {
+      _snack('Produk NONAKTIF, tidak bisa dibuka');
+      return;
+    }
+
+    widget.onTap!.call();
   }
 
   @override
@@ -104,134 +132,139 @@ class _ProductCardState extends State<ProductCard> {
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
       child: InkWell(
-        onTap: widget.onTap,
+        onTap: _handleTap,
         borderRadius: BorderRadius.circular(22),
-        child: Container(
-          padding: const EdgeInsets.all(14),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(22),
-            border: Border.all(color: const Color(0xFFEDE9FE)),
-            boxShadow: const [
-              BoxShadow(
-                blurRadius: 18,
-                offset: Offset(0, 10),
-                color: Color(0x14000000),
-              ),
-            ],
-          ),
-          child: Row(
-            children: [
-              ClipRRect(
-                borderRadius: BorderRadius.circular(14),
-                child: Container(
-                  width: 72,
-                  height: 72,
-                  color: const Color(0xFFF5F3FF),
-                  child: img.isEmpty
-                      ? const Icon(Icons.image_outlined)
-                      : Image.network(
-                          img,
-                          fit: BoxFit.cover,
-                          errorBuilder: (_, __, ___) =>
-                              const Icon(Icons.broken_image_outlined),
-                        ),
+        child: Opacity(
+          opacity: _isActive ? 1 : 0.85,
+          child: Container(
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(22),
+              border: Border.all(color: const Color(0xFFEDE9FE)),
+              boxShadow: const [
+                BoxShadow(
+                  blurRadius: 18,
+                  offset: Offset(0, 10),
+                  color: Color(0x14000000),
                 ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      p.namaProduk ?? 'Produk',
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(fontWeight: FontWeight.w900),
-                    ),
-                    const SizedBox(height: 6),
-                    Text(
-                      _rupiah(p.harga ?? 0),
-                      style: const TextStyle(
-                        fontWeight: FontWeight.w900,
-                        color: Color(0xFF6D28D9),
+              ],
+            ),
+            child: Row(
+              children: [
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(14),
+                  child: Container(
+                    width: 72,
+                    height: 72,
+                    color: const Color(0xFFF5F3FF),
+                    child: img.isEmpty
+                        ? const Icon(Icons.image_outlined)
+                        : Image.network(
+                            img,
+                            fit: BoxFit.cover,
+                            errorBuilder: (_, __, ___) =>
+                                const Icon(Icons.broken_image_outlined),
+                          ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        p.namaProduk,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontWeight: FontWeight.w900),
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        _rupiah(p.harga),
+                        style: const TextStyle(
+                          fontWeight: FontWeight.w900,
+                          color: Color(0xFF6D28D9),
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 10,
+                              vertical: 6,
+                            ),
+                            decoration: BoxDecoration(
+                              color: statusBg,
+                              borderRadius: BorderRadius.circular(999),
+                              border: Border.all(color: statusBd),
+                            ),
+                            child: Text(
+                              statusText,
+                              style: TextStyle(
+                                color: statusFg,
+                                fontWeight: FontWeight.w900,
+                                fontSize: 12,
+                              ),
+                            ),
+                          ),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 10,
+                              vertical: 6,
+                            ),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFF5F3FF),
+                              borderRadius: BorderRadius.circular(999),
+                              border: Border.all(
+                                color: const Color(0xFFE9D5FF),
+                              ),
+                            ),
+                            child: Text(
+                              'Stok: ${p.stok}',
+                              style: const TextStyle(
+                                color: Color(0xFF6D28D9),
+                                fontWeight: FontWeight.w900,
+                                fontSize: 12,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 10),
+                SizedBox(
+                  height: 42,
+                  child: ElevatedButton(
+                    onPressed: (_busy || !_isActive) ? null : _addToCart,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF6D28D9),
+                      foregroundColor: Colors.white,
+                      disabledBackgroundColor: Colors.black12,
+                      disabledForegroundColor: Colors.black45,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14),
                       ),
                     ),
-                    const SizedBox(height: 8),
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
-                      children: [
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 10,
-                            vertical: 6,
+                    child: _busy
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Text(
+                            'Tambah',
+                            style: TextStyle(fontWeight: FontWeight.w900),
                           ),
-                          decoration: BoxDecoration(
-                            color: statusBg,
-                            borderRadius: BorderRadius.circular(999),
-                            border: Border.all(color: statusBd),
-                          ),
-                          child: Text(
-                            statusText,
-                            style: TextStyle(
-                              color: statusFg,
-                              fontWeight: FontWeight.w900,
-                              fontSize: 12,
-                            ),
-                          ),
-                        ),
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 10,
-                            vertical: 6,
-                          ),
-                          decoration: BoxDecoration(
-                            color: const Color(0xFFF5F3FF),
-                            borderRadius: BorderRadius.circular(999),
-                            border: Border.all(color: const Color(0xFFE9D5FF)),
-                          ),
-                          child: Text(
-                            'Stok: ${p.stok ?? 0}',
-                            style: const TextStyle(
-                              color: Color(0xFF6D28D9),
-                              fontWeight: FontWeight.w900,
-                              fontSize: 12,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(width: 10),
-              SizedBox(
-                height: 42,
-                child: ElevatedButton(
-                  onPressed: (_busy || !_isActive) ? null : _addToCart,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF6D28D9),
-                    foregroundColor: Colors.white,
-                    disabledBackgroundColor: Colors.black12,
-                    disabledForegroundColor: Colors.black45,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(14),
-                    ),
                   ),
-                  child: _busy
-                      ? const SizedBox(
-                          width: 18,
-                          height: 18,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Text(
-                          'Tambah',
-                          style: TextStyle(fontWeight: FontWeight.w900),
-                        ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),

@@ -1,8 +1,8 @@
 // lib/seller/presentation/pages/seller_product_form.dart
 import 'package:flutter/material.dart';
+import 'package:warung_wuenak/services/category_repository.dart';
 
 import 'package:warung_wuenak/models/product_model.dart';
-import 'package:warung_wuenak/services/category_service.dart';
 import 'package:warung_wuenak/services/user_http.dart';
 
 class SellerProductFormPage extends StatefulWidget {
@@ -64,31 +64,66 @@ class _SellerProductFormPageState extends State<SellerProductFormPage> {
     return int.tryParse(m.group(1) ?? '') ?? 0;
   }
 
-  Future<void> _loadCategories() async {
-    final cats = await CategoryService.fetchCategoriesAdmin();
-    if (!mounted) return;
+  Future<void> _loadCategories({
+    bool force = false,
+    int? preferCategoryId,
+  }) async {
+    // 1) pakai cache dulu biar cepat tampil
+    final cached = CategoryRepository.getCached();
+    if (cached.isNotEmpty && mounted) {
+      _setCategoryOptionsFromList(cached, preferCategoryId: preferCategoryId);
+    }
 
-    final clean = cats.where((c) => c.categoryId > 0).toList()
-      ..sort((a, b) => a.categoryId.compareTo(b.categoryId));
+    // 2) ambil dari server
+    final list = await CategoryRepository.list(force: force);
+    if (!mounted) return;
+    _setCategoryOptionsFromList(list, preferCategoryId: preferCategoryId);
+  }
+
+  void _setCategoryOptionsFromList(
+    List<Map<String, dynamic>> list, {
+    int? preferCategoryId,
+  }) {
+    final clean =
+        list.where((c) {
+          final id = int.tryParse('${c['category_id'] ?? 0}') ?? 0;
+          return id > 0;
+        }).toList()..sort((a, b) {
+          final ia = int.tryParse('${a['category_id'] ?? 0}') ?? 0;
+          final ib = int.tryParse('${b['category_id'] ?? 0}') ?? 0;
+          return ia.compareTo(ib);
+        });
 
     final opts = clean.map((c) {
-      final name = c.categoryName.trim().isNotEmpty
-          ? c.categoryName.trim()
-          : 'Kategori ${c.categoryId}';
-      return '${c.categoryId} - $name';
+      final id = int.tryParse('${c['category_id'] ?? 0}') ?? 0;
+      final name = (c['category_name'] ?? '').toString().trim();
+      final label = name.isNotEmpty ? name : 'Kategori $id';
+      return '$id - $label';
     }).toList();
 
     String? selected;
-    if (_isEdit) {
+
+    // kalau baru create kategori -> prioritaskan itu
+    if (preferCategoryId != null && preferCategoryId > 0) {
+      selected = opts.firstWhere(
+        (x) => _leadingInt(x) == preferCategoryId,
+        orElse: () => '',
+      );
+      if (selected.isEmpty) selected = null;
+    }
+
+    // kalau edit -> pilih sesuai product.categoryId
+    if (selected == null && _isEdit) {
       final need = widget.initial!.categoryId;
       selected = opts.firstWhere(
         (x) => _leadingInt(x) == need,
         orElse: () => opts.isNotEmpty ? opts.first : '',
       );
       if (selected.isEmpty) selected = null;
-    } else {
-      selected = opts.isNotEmpty ? opts.first : null;
     }
+
+    // kalau create -> default first
+    selected ??= (opts.isNotEmpty ? opts.first : null);
 
     setState(() {
       _categoryOptions = opts;
@@ -119,7 +154,152 @@ class _SellerProductFormPageState extends State<SellerProductFormPage> {
     if (!_isEdit) return 'aktif';
     final s = (widget.initial!.status).toString().trim().toLowerCase();
     return _allowedStatuses.contains(s) ? s : 'aktif';
-    // ✅ status tetap, admin yang mengatur aktif/nonaktif
+  }
+
+  Future<void> _openAddCategoryDialog() async {
+    final nameC = TextEditingController();
+    final descC = TextEditingController();
+
+    bool saving = false;
+
+    bool isDuplicateRes(Map<String, dynamic> res) {
+      final detail = (res['detail'] ?? '').toString();
+      final status = (res['status'] ?? res['statusCode'] ?? 0);
+      return detail == 'CATEGORY_EXISTS' || status == 409;
+    }
+
+    await showDialog(
+      context: context,
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (ctx, setStateDialog) {
+            Future<void> submit() async {
+              if (saving) return;
+
+              final name = nameC.text.trim();
+              if (name.isEmpty) {
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Nama kategori wajib diisi')),
+                  );
+                }
+                return;
+              }
+
+              setStateDialog(() => saving = true);
+
+              try {
+                // ✅ parent_id sudah dihapus -> JANGAN kirim parentId lagi
+                final res = await CategoryRepository.create(
+                  categoryName: name,
+                  description: descC.text.trim(),
+                );
+
+                if (!mounted) return;
+
+                final ok = res['ok'] == true;
+
+                // ✅ sukses -> pilih kategori baru
+                if (ok) {
+                  final newId = int.tryParse('${res['category_id'] ?? 0}') ?? 0;
+
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Kategori ditambahkan')),
+                  );
+
+                  Navigator.pop(ctx);
+
+                  // reload + auto select kategori baru
+                  await _loadCategories(force: true, preferCategoryId: newId);
+                  return;
+                }
+
+                // ✅ duplicate (makanan/Makanan/MAKANAN)
+                if (isDuplicateRes(res)) {
+                  final existingId =
+                      int.tryParse('${res['existing_category_id'] ?? 0}') ?? 0;
+
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text(
+                        'Kategori sudah ada. Huruf besar/kecil dianggap sama.',
+                      ),
+                    ),
+                  );
+
+                  // jika server memberi existing id, auto pilih kategori yang sudah ada
+                  if (existingId > 0) {
+                    Navigator.pop(ctx);
+                    await _loadCategories(
+                      force: true,
+                      preferCategoryId: existingId,
+                    );
+                  }
+                  return;
+                }
+
+                // error lain
+                final msg =
+                    (res['message']?.toString().trim().isNotEmpty == true)
+                    ? res['message'].toString()
+                    : 'Gagal menambah kategori';
+
+                ScaffoldMessenger.of(
+                  context,
+                ).showSnackBar(SnackBar(content: Text(msg)));
+              } catch (e) {
+                if (!mounted) return;
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text('Gagal tambah kategori: $e')),
+                );
+              } finally {
+                if (ctx.mounted) setStateDialog(() => saving = false);
+              }
+            }
+
+            return AlertDialog(
+              title: const Text('Tambah Kategori'),
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    TextField(
+                      controller: nameC,
+                      decoration: const InputDecoration(
+                        labelText: 'Nama Kategori',
+                        border: OutlineInputBorder(),
+                        isDense: true,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: descC,
+                      maxLines: 3,
+                      decoration: const InputDecoration(
+                        labelText: 'Deskripsi (opsional)',
+                        border: OutlineInputBorder(),
+                        isDense: true,
+                      ),
+                    ),
+                    // ✅ parent field dihapus total
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: saving ? null : () => Navigator.pop(ctx),
+                  child: const Text('Batal'),
+                ),
+                FilledButton(
+                  onPressed: saving ? null : submit,
+                  child: Text(saving ? 'Menyimpan...' : 'Simpan'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
   }
 
   Future<void> _submit() async {
@@ -152,14 +332,13 @@ class _SellerProductFormPageState extends State<SellerProductFormPage> {
 
     setState(() => _saving = true);
 
-    // ✅ KIRIM JSON (bukan form) -> FIX error backend
     final body = <String, dynamic>{
       'category_id': categoryId,
       'nama_produk': nama,
       'deskripsi': desc,
       'harga': harga,
       'stok': stok,
-      'status': _statusForSubmit(), // ✅ disembunyikan dari UI seller
+      'status': _statusForSubmit(),
     };
 
     Map<String, dynamic> res;
@@ -202,19 +381,40 @@ class _SellerProductFormPageState extends State<SellerProductFormPage> {
                     border: OutlineInputBorder(),
                     isDense: true,
                   ),
-                  child: DropdownButtonHideUnderline(
-                    child: DropdownButton<String>(
-                      value: _selectedCategory,
-                      isExpanded: true,
-                      items: _categoryOptions
-                          .map(
-                            (x) => DropdownMenuItem(value: x, child: Text(x)),
-                          )
-                          .toList(),
-                      onChanged: _saving
-                          ? null
-                          : (v) => setState(() => _selectedCategory = v),
-                    ),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: DropdownButtonHideUnderline(
+                          child: DropdownButton<String>(
+                            value: _selectedCategory,
+                            isExpanded: true,
+                            items: _categoryOptions
+                                .map(
+                                  (x) => DropdownMenuItem(
+                                    value: x,
+                                    child: Text(x),
+                                  ),
+                                )
+                                .toList(),
+                            onChanged: _saving
+                                ? null
+                                : (v) => setState(() => _selectedCategory = v),
+                          ),
+                        ),
+                      ),
+                      IconButton(
+                        tooltip: 'Tambah kategori',
+                        onPressed: _saving ? null : _openAddCategoryDialog,
+                        icon: const Icon(Icons.add_circle_outline_rounded),
+                      ),
+                      IconButton(
+                        tooltip: 'Refresh kategori',
+                        onPressed: _saving
+                            ? null
+                            : () => _loadCategories(force: true),
+                        icon: const Icon(Icons.refresh),
+                      ),
+                    ],
                   ),
                 ),
                 if (_categoryOptions.isEmpty)

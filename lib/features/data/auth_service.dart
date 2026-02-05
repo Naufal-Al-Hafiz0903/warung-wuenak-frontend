@@ -10,9 +10,7 @@ class AuthService {
   static final Future<SharedPreferences> _prefs =
       SharedPreferences.getInstance();
 
-  // =========================
-  // LOGIN (EXACT via backend)
-  // =========================
+  // LOGIN
   static Future<Map<String, dynamic>> login(
     String email,
     String password,
@@ -31,12 +29,10 @@ class AuthService {
       await prefs.setString(_userKey, jsonEncode(data));
       await prefs.setString(_tokenKeyLegacy, token);
 
-      // kompatibilitas tambahan
       await prefs.setString("level", (data["level"] ?? "user").toString());
       await prefs.setString("email", (data["email"] ?? "").toString());
       await prefs.setString("name", (data["name"] ?? "").toString());
 
-      // ✅ simpan user_id (berguna untuk fallback foto/profil saat offline)
       final uidRaw = data["user_id"] ?? data["userId"];
       final uid = (uidRaw is num)
           ? uidRaw.toInt()
@@ -49,17 +45,11 @@ class AuthService {
     return res;
   }
 
-  // =========================
-  // GET TOKEN
-  // =========================
   static Future<String?> getToken() async {
     final prefs = await _prefs;
     return prefs.getString(_tokenKey) ?? prefs.getString(_tokenKeyLegacy);
   }
 
-  // =========================
-  // GET USER DATA
-  // =========================
   static Future<Map<String, dynamic>?> getUser() async {
     final prefs = await _prefs;
     final raw = prefs.getString(_userKey);
@@ -74,32 +64,23 @@ class AuthService {
     }
   }
 
-  // =========================
-  // GET ROLE
-  // =========================
   static Future<String?> getRole() async {
     final user = await getUser();
     return user?['level']?.toString();
   }
 
-  // =========================
-  // LOGOUT
-  // =========================
   static Future<void> logout() async {
     final prefs = await _prefs;
     await prefs.clear();
   }
 
-  // =========================
-  // REGISTER (ROLE PICK)
-  // =========================
   static Future<Map<String, dynamic>> register({
     required String name,
     required String nomorUser,
     required String alamatUser,
     required String email,
     required String password,
-    String level = 'user', // ✅ default pembeli
+    String level = 'user',
   }) async {
     return Api.register(
       name: name,
@@ -108,6 +89,19 @@ class AuthService {
       email: email,
       password: password,
       level: level,
+    );
+  }
+
+  // CHANGE PASSWORD ✅
+  static Future<Map<String, dynamic>> changePassword({
+    required String email,
+    required String oldPassword,
+    required String newPassword,
+  }) async {
+    return Api.changePassword(
+      email: email,
+      oldPassword: oldPassword,
+      newPassword: newPassword,
     );
   }
 }

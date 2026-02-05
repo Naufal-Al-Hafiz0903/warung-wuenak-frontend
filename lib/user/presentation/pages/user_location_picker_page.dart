@@ -23,7 +23,9 @@ class _UserLocationPickerPageState extends State<UserLocationPickerPage> {
 
   LatLng? _picked;
   LatLng? _gps;
-  double? _accuracy;
+
+  double? _gpsAccuracy;
+  bool _pickedFromGps = true;
 
   @override
   void initState() {
@@ -74,7 +76,7 @@ class _UserLocationPickerPageState extends State<UserLocationPickerPage> {
     try {
       await _ensureLocationReady();
 
-      // 1) coba ambil lokasi tersimpan dari server
+      // 1) server location
       final loc = await MeService.fetchMyLocation();
       LatLng? serverLoc;
       if (loc != null && loc['lat'] != null && loc['lng'] != null) {
@@ -89,10 +91,11 @@ class _UserLocationPickerPageState extends State<UserLocationPickerPage> {
         desiredAccuracy: LocationAccuracy.high,
       );
       _gps = LatLng(p.latitude, p.longitude);
-      _accuracy = p.accuracy;
+      _gpsAccuracy = p.accuracy;
 
       // 3) initial pin
       _picked = widget.initial ?? serverLoc ?? _gps;
+      _pickedFromGps = (_picked == _gps); // best-effort
 
       if (_picked != null) {
         WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -119,15 +122,10 @@ class _UserLocationPickerPageState extends State<UserLocationPickerPage> {
       final res = await MeService.updateMyLocation(
         lat: p.latitude,
         lng: p.longitude,
-        accuracyM: _accuracy?.round(),
+        accuracyM: _pickedFromGps ? _gpsAccuracy?.round() : null,
       );
 
       if (!mounted) return;
-
-      if (res == null) {
-        _snack('Gagal menyimpan lokasi', bg: Colors.red);
-        return;
-      }
 
       final ok = res['ok'] == true;
       final throttled = res['throttled'] == true;
@@ -214,7 +212,10 @@ class _UserLocationPickerPageState extends State<UserLocationPickerPage> {
                   options: MapOptions(
                     initialCenter: pin ?? const LatLng(-6.2, 106.816666),
                     initialZoom: 15,
-                    onTap: (_, latlng) => setState(() => _picked = latlng),
+                    onTap: (_, latlng) => setState(() {
+                      _picked = latlng;
+                      _pickedFromGps = false;
+                    }),
                   ),
                   children: [
                     TileLayer(
@@ -250,7 +251,6 @@ class _UserLocationPickerPageState extends State<UserLocationPickerPage> {
                     ),
                   ],
                 ),
-
                 Positioned(
                   left: 16,
                   right: 16,
@@ -294,7 +294,10 @@ class _UserLocationPickerPageState extends State<UserLocationPickerPage> {
                                 onPressed: (gps == null || _saving)
                                     ? null
                                     : () {
-                                        setState(() => _picked = gps);
+                                        setState(() {
+                                          _picked = gps;
+                                          _pickedFromGps = true;
+                                        });
                                         _map.move(gps, 16);
                                       },
                                 icon: const Icon(Icons.my_location_rounded),

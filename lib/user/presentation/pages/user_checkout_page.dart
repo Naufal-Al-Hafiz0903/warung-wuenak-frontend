@@ -3,6 +3,7 @@ import 'package:geolocator/geolocator.dart';
 
 import '../../../core/location/device_location_service.dart';
 import '../../../services/user_http.dart';
+import '../../data/checkout_service.dart'; // pastikan path ini sesuai folder kamu
 
 class UserCheckoutPage extends StatefulWidget {
   final Map<String, dynamic> user;
@@ -18,7 +19,22 @@ class UserCheckoutPage extends StatefulWidget {
 
 class _UserCheckoutPageState extends State<UserCheckoutPage> {
   bool _busy = false;
+  bool _quoteLoading = false;
+
   String? _error;
+  String? _quoteError;
+
+  // quote hasil server
+  double? _distanceKm;
+  int? _distanceM;
+  int? _ongkir;
+  double? _maxDistanceKm;
+  bool _withinRange = true;
+
+  String? _areaLabel;
+  String? _areaType;
+
+  Position? _pos;
 
   // ✅ HANYA 3 kurir
   static const List<_CourierOption> _couriers = [
@@ -46,9 +62,11 @@ class _UserCheckoutPageState extends State<UserCheckoutPage> {
 
   // input user
   final _alamatCtrl = TextEditingController(text: '');
-  final _ongkirCtrl = TextEditingController(text: '16000');
 
-  String _metode = 'cash'; // cash|transfer|qris (sesuaikan)
+  // ongkir tampil (readonly)
+  final _ongkirCtrl = TextEditingController(text: '0');
+
+  String _metode = 'cash'; // cash|transfer|qris
 
   @override
   void initState() {
@@ -56,6 +74,11 @@ class _UserCheckoutPageState extends State<UserCheckoutPage> {
     final pre = (widget.prefillKurir ?? '').trim().toLowerCase();
     final exists = _couriers.any((c) => c.key == pre);
     _selectedKurir = exists ? pre : _couriers.first.key;
+
+    // auto quote saat buka halaman
+    WidgetsBinding.instance.addPostFrameCallback(
+      (_) => _refreshQuote(forceGps: true),
+    );
   }
 
   @override
@@ -70,9 +93,99 @@ class _UserCheckoutPageState extends State<UserCheckoutPage> {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(s)));
   }
 
-  int _toInt(String s, [int def = 0]) {
-    final x = s.trim();
-    return int.tryParse(x) ?? def;
+  int _toInt(dynamic v, [int def = 0]) {
+    if (v == null) return def;
+    if (v is num) return v.toInt();
+    return int.tryParse('$v') ?? def;
+  }
+
+  double _toDouble(dynamic v, [double def = 0]) {
+    if (v == null) return def;
+    if (v is num) return v.toDouble();
+    return double.tryParse('$v') ?? def;
+  }
+
+  Future<void> _refreshQuote({bool forceGps = false}) async {
+    if (_quoteLoading) return;
+
+    setState(() {
+      _quoteLoading = true;
+      _quoteError = null;
+    });
+
+    try {
+      // 1) ambil GPS
+      if (_pos == null || forceGps) {
+        final Position p = await DeviceLocationService.getCurrentHighAccuracy();
+        _pos = p;
+
+        // 2) update lokasi user -> /me/location (biar server punya data)
+        final locRes = await UserHttp.postJson('me/location', {
+          'lat': p.latitude,
+          'lng': p.longitude,
+          'accuracy_m': p.accuracy.round(),
+        });
+
+        if (locRes['ok'] != true) {
+          // tidak memblok, hanya info
+          _snack(
+            'Lokasi gagal dikirim (tetap lanjut): ${locRes['message'] ?? ''}',
+          );
+        }
+      }
+
+      final p = _pos!;
+      // 3) quote ongkir dari server
+      final res = await CheckoutService.quoteOngkir(
+        kurir: _selectedKurir,
+        buyerLat: p.latitude,
+        buyerLng: p.longitude,
+        accuracyM: p.accuracy.round(),
+      );
+
+      if (res['ok'] != true) {
+        setState(
+          () =>
+              _quoteError = (res['message'] ?? 'Gagal ambil quote').toString(),
+        );
+        return;
+      }
+
+      final data = (res['data'] is Map)
+          ? Map<String, dynamic>.from(res['data'])
+          : <String, dynamic>{};
+
+      final geo = (data['geo_limit'] is Map)
+          ? Map<String, dynamic>.from(data['geo_limit'])
+          : <String, dynamic>{};
+
+      final distKm = _toDouble(data['distance_km'], 0);
+      final distM = _toInt(data['distance_m'], 0);
+      final ongkir = _toInt(data['ongkir'], 0);
+      final maxKm = _toDouble(geo['max_distance_km'], 0);
+      final within = (data['within_range'] == true);
+
+      setState(() {
+        _distanceKm = distKm;
+        _distanceM = distM;
+        _ongkir = ongkir;
+        _maxDistanceKm = (maxKm > 0) ? maxKm : null;
+        _withinRange = within;
+
+        _areaLabel = (geo['area_label'] ?? '').toString().trim().isEmpty
+            ? null
+            : geo['area_label'].toString();
+        _areaType = (geo['area_type'] ?? '').toString().trim().isEmpty
+            ? null
+            : geo['area_type'].toString();
+
+        _ongkirCtrl.text = '$ongkir';
+      });
+    } catch (e) {
+      setState(() => _quoteError = e.toString());
+    } finally {
+      if (mounted) setState(() => _quoteLoading = false);
+    }
   }
 
   Future<void> _checkout() async {
@@ -90,40 +203,39 @@ class _UserCheckoutPageState extends State<UserCheckoutPage> {
         return;
       }
 
-      final ongkir = _toInt(_ongkirCtrl.text, 0);
-      if (ongkir < 0) {
-        setState(() => _error = 'Ongkir tidak valid');
+      // pastikan quote sudah ada
+      if (_pos == null) {
+        await _refreshQuote(forceGps: true);
+      }
+
+      if (_quoteError != null) {
+        setState(() => _error = 'Quote ongkir gagal: $_quoteError');
         return;
       }
 
-      // 1) ambil lokasi real-time device (GPS)
-      final Position pos = await DeviceLocationService.getCurrentHighAccuracy();
-
-      // 2) update lokasi user -> /me/location
-      final locRes = await UserHttp.postJson('me/location', {
-        'lat': pos.latitude,
-        'lng': pos.longitude,
-        'accuracy_m': pos.accuracy.round(),
-      });
-
-      // kalau throttled / ok false, tetap lanjut (biar user tidak stuck)
-      if (locRes['ok'] != true) {
-        _snack(
-          'Lokasi gagal dikirim (tetap lanjut): ${locRes['message'] ?? ''}',
+      // kalau di luar jangkauan, blok dari UI
+      if (_withinRange == false) {
+        final mx = (_maxDistanceKm ?? 0);
+        setState(
+          () => _error =
+              'Lokasi kamu di luar jangkauan pengiriman. Maksimal ${mx.toStringAsFixed(2)} km.',
         );
+        return;
       }
 
-      // 3) checkout order -> /orders/checkout
-      // 3) checkout order -> /orders/checkout-from-cart
-      final orderRes = await UserHttp.postJson('orders/checkout-from-cart', {
-        'metode_pembayaran': _metode,
-        'kurir': _selectedKurir,
-        'ongkir': ongkir,
-        'alamat_pengiriman': alamat,
-        'buyer_lat': pos.latitude,
-        'buyer_lng': pos.longitude,
-        'accuracy_m': pos.accuracy.round(),
-      });
+      final p = _pos!;
+      final ongkirFinal = _ongkir ?? 0;
+
+      // checkout: gunakan /orders/checkout (single source of truth)
+      final orderRes = await CheckoutService.checkoutFromCart(
+        metodePembayaran: _metode,
+        kurir: _selectedKurir,
+        ongkir: ongkirFinal, // optional, server tetap hitung sendiri
+        alamatPengiriman: alamat,
+        buyerLat: p.latitude,
+        buyerLng: p.longitude,
+        accuracyM: p.accuracy.round(),
+      );
 
       if (orderRes['ok'] == true) {
         _snack('Checkout berhasil');
@@ -132,8 +244,8 @@ class _UserCheckoutPageState extends State<UserCheckoutPage> {
         Navigator.pop(context, {
           'checkout_ok': true,
           'kurir': _selectedKurir,
-          'lat': pos.latitude,
-          'lng': pos.longitude,
+          'lat': p.latitude,
+          'lng': p.longitude,
         });
         return;
       }
@@ -152,6 +264,14 @@ class _UserCheckoutPageState extends State<UserCheckoutPage> {
   Widget build(BuildContext context) {
     final selected = _couriers.firstWhere((c) => c.key == _selectedKurir);
 
+    final distanceText = (_distanceKm == null)
+        ? '-'
+        : '${_distanceKm!.toStringAsFixed(2)} km (${_distanceM ?? 0} m)';
+
+    final maxText = (_maxDistanceKm == null)
+        ? '-'
+        : '${_maxDistanceKm!.toStringAsFixed(2)} km';
+
     return Scaffold(
       backgroundColor: const Color(0xFFF6F3FF),
       appBar: AppBar(
@@ -168,6 +288,15 @@ class _UserCheckoutPageState extends State<UserCheckoutPage> {
             ),
           ),
         ),
+        actions: [
+          IconButton(
+            tooltip: 'Refresh Quote',
+            onPressed: (_busy || _quoteLoading)
+                ? null
+                : () => _refreshQuote(forceGps: true),
+            icon: const Icon(Icons.refresh),
+          ),
+        ],
       ),
       body: ListView(
         padding: const EdgeInsets.all(16),
@@ -182,9 +311,94 @@ class _UserCheckoutPageState extends State<UserCheckoutPage> {
                 ),
                 const SizedBox(height: 8),
                 const Text(
-                  'Aplikasi akan mengambil lokasi GPS terbaru dan mengirimkannya ke server sebelum membuat order.',
+                  'Ongkir dihitung otomatis dari koordinat TOKO → koordinat KAMU (haversine). Batas jarak mengikuti wilayah kamu (maksimum seluas kota).',
                   style: TextStyle(color: Colors.black54),
                 ),
+                const SizedBox(height: 14),
+
+                // ===== Quote Panel =====
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF5F3FF),
+                    borderRadius: BorderRadius.circular(18),
+                    border: Border.all(color: const Color(0xFFE9D5FF)),
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(
+                        Icons.route_outlined,
+                        color: Color(0xFF6D28D9),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Jarak: $distanceText',
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w900,
+                                color: Color(0xFF6D28D9),
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              'Batas maks: $maxText'
+                              '${_areaLabel != null ? " • ${_areaLabel!}" : ""}',
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w800,
+                                color: Color(0xFF6D28D9),
+                              ),
+                            ),
+                            if (_areaType != null) ...[
+                              const SizedBox(height: 2),
+                              Text(
+                                'Tipe area: $_areaType',
+                                style: const TextStyle(
+                                  color: Colors.black54,
+                                  fontSize: 12,
+                                ),
+                              ),
+                            ],
+                            if (_quoteLoading) ...[
+                              const SizedBox(height: 8),
+                              const LinearProgressIndicator(minHeight: 4),
+                            ],
+                            if (_quoteError != null) ...[
+                              const SizedBox(height: 8),
+                              Text(
+                                _quoteError!,
+                                style: const TextStyle(
+                                  color: Colors.red,
+                                  fontWeight: FontWeight.w800,
+                                ),
+                              ),
+                            ],
+                            if (_withinRange == false) ...[
+                              const SizedBox(height: 8),
+                              const Text(
+                                '⚠ Lokasi kamu di luar jangkauan.',
+                                style: TextStyle(
+                                  color: Colors.red,
+                                  fontWeight: FontWeight.w900,
+                                ),
+                              ),
+                            ],
+                          ],
+                        ),
+                      ),
+                      Text(
+                        'Rp ${(_ongkir ?? 0)}',
+                        style: const TextStyle(
+                          fontWeight: FontWeight.w900,
+                          color: Color(0xFF6D28D9),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+
                 const SizedBox(height: 14),
 
                 // Alamat
@@ -205,7 +419,7 @@ class _UserCheckoutPageState extends State<UserCheckoutPage> {
 
                 const SizedBox(height: 12),
 
-                // Metode pembayaran (sederhana)
+                // Metode pembayaran
                 const Text(
                   'Metode Pembayaran',
                   style: TextStyle(fontWeight: FontWeight.w900),
@@ -241,25 +455,25 @@ class _UserCheckoutPageState extends State<UserCheckoutPage> {
 
                 const SizedBox(height: 12),
 
-                // Ongkir
+                // Ongkir (readonly)
                 const Text(
-                  'Ongkir',
+                  'Ongkir (otomatis)',
                   style: TextStyle(fontWeight: FontWeight.w900),
                 ),
                 const SizedBox(height: 8),
                 TextField(
                   controller: _ongkirCtrl,
-                  enabled: !_busy,
+                  enabled: false,
                   keyboardType: TextInputType.number,
                   decoration: const InputDecoration(
                     prefixIcon: Icon(Icons.payments_outlined),
-                    hintText: 'contoh: 16000',
+                    hintText: 'Otomatis dari sistem',
                   ),
                 ),
 
                 const SizedBox(height: 14),
 
-                // Pilih Kurir (hanya 3)
+                // Pilih Kurir
                 const Text(
                   'Pilih Kurir',
                   style: TextStyle(fontWeight: FontWeight.w900),
@@ -270,9 +484,12 @@ class _UserCheckoutPageState extends State<UserCheckoutPage> {
                   return Padding(
                     padding: const EdgeInsets.only(bottom: 10),
                     child: InkWell(
-                      onTap: _busy
+                      onTap: (_busy || _quoteLoading)
                           ? null
-                          : () => setState(() => _selectedKurir = c.key),
+                          : () async {
+                              setState(() => _selectedKurir = c.key);
+                              await _refreshQuote(forceGps: false);
+                            },
                       borderRadius: BorderRadius.circular(18),
                       child: Container(
                         padding: const EdgeInsets.all(14),
@@ -331,7 +548,6 @@ class _UserCheckoutPageState extends State<UserCheckoutPage> {
                   );
                 }),
 
-                // Error
                 if (_error != null) ...[
                   const SizedBox(height: 6),
                   Text(
@@ -345,11 +561,12 @@ class _UserCheckoutPageState extends State<UserCheckoutPage> {
 
                 const SizedBox(height: 14),
 
-                // Button
                 SizedBox(
                   width: double.infinity,
                   child: ElevatedButton.icon(
-                    onPressed: _busy ? null : _checkout,
+                    onPressed: (_busy || _quoteLoading || _withinRange == false)
+                        ? null
+                        : _checkout,
                     style: ElevatedButton.styleFrom(
                       backgroundColor: const Color(0xFF6D28D9),
                       foregroundColor: Colors.white,
@@ -376,9 +593,7 @@ class _UserCheckoutPageState extends State<UserCheckoutPage> {
                 _MiniSummary(
                   kurir: selected.title,
                   metode: _metode.toUpperCase(),
-                  ongkir: _ongkirCtrl.text.trim().isEmpty
-                      ? '0'
-                      : _ongkirCtrl.text.trim(),
+                  ongkir: (_ongkir ?? 0).toString(),
                 ),
               ],
             ),
@@ -390,7 +605,7 @@ class _UserCheckoutPageState extends State<UserCheckoutPage> {
 }
 
 class _CourierOption {
-  final String key; // yang dikirim ke server
+  final String key;
   final String title;
   final String subtitle;
   final IconData icon;

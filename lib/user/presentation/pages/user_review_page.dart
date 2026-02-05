@@ -1,9 +1,6 @@
-// pages/user_review_page.dart
-import 'dart:convert';
-import '../../../core/config/app_config.dart';
 import 'package:flutter/material.dart';
-import 'package:http/http.dart' as http;
-import 'package:shared_preferences/shared_preferences.dart';
+
+import '../../../services/user_http.dart';
 
 class UserReviewPage extends StatefulWidget {
   final Map<String, dynamic> user;
@@ -22,8 +19,6 @@ class UserReviewPage extends StatefulWidget {
 }
 
 class _UserReviewPageState extends State<UserReviewPage> {
-  static const String _baseUrl = AppConfig.baseUrl;
-
   bool _loading = true;
   bool _busy = false;
 
@@ -45,71 +40,100 @@ class _UserReviewPageState extends State<UserReviewPage> {
     super.dispose();
   }
 
-  Future<String?> _token() async {
-    final sp = await SharedPreferences.getInstance();
-    return sp.getString('token');
-  }
-
-  Map<String, String> _headers(String token) => {
-    'Accept': 'application/json',
-    'Content-Type': 'application/json',
-    'Authorization': 'Bearer $token',
-  };
-
   void _snack(String s) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(s)));
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(s), behavior: SnackBarBehavior.floating),
+    );
+  }
+
+  List _extractList(Map<String, dynamic> res) {
+    final candidates = [res['data'], res['reviews'], res['items']];
+    for (final c in candidates) {
+      if (c is List) return c;
+    }
+    final d = res['data'];
+    if (d is Map && d['data'] is List) return d['data'] as List;
+    return [];
+  }
+
+  Map<String, dynamic>? _extractMap(Map<String, dynamic> res) {
+    final d = res['data'];
+    if (d is Map) return Map<String, dynamic>.from(d);
+    if (d is Map && d['data'] is Map)
+      return Map<String, dynamic>.from(d['data']);
+    return null;
+  }
+
+  Future<Map<String, dynamic>> _getJsonSmart(List<String> paths) async {
+    Map<String, dynamic> last = {'ok': false, 'message': 'Request gagal'};
+    for (final p in paths) {
+      final r = await UserHttp.getJson(p);
+      last = r;
+      if (r['ok'] == true) return r;
+    }
+    return last;
+  }
+
+  Future<Map<String, dynamic>> _postSmart(
+    String path,
+    Map<String, dynamic> jsonBody,
+    Map<String, String> formBody,
+  ) async {
+    // 1) JSON dulu
+    var r = await UserHttp.postJson(path, jsonBody);
+    if (r['ok'] == true) return r;
+
+    // 2) fallback form
+    r = await UserHttp.postForm(path, formBody);
+    return r;
   }
 
   Future<void> _load() async {
     setState(() => _loading = true);
-    try {
-      final tok = await _token();
-      if (tok == null || tok.isEmpty) {
-        _snack('Token tidak ditemukan, silakan login ulang');
-        return;
-      }
 
-      // list review produk
-      final r = await http.get(
-        Uri.parse('$_baseUrl/reviews/product/${widget.productId}'),
-        headers: _headers(tok),
-      );
-      if (r.statusCode >= 200 && r.statusCode < 300) {
-        final j = jsonDecode(r.body);
-        final data = (j is Map && j['data'] is List)
-            ? (j['data'] as List)
-            : <dynamic>[];
-        _reviews = data
+    try {
+      // list review produk (support 2 pola endpoint)
+      final listRes = await _getJsonSmart([
+        'reviews/product?product_id=${widget.productId}',
+        'reviews/product/${widget.productId}',
+      ]);
+
+      if (listRes['ok'] == true) {
+        final list = _extractList(listRes);
+        _reviews = list
             .map((e) => Map<String, dynamic>.from(e as Map))
             .toList();
+      } else {
+        _reviews = [];
       }
 
       // my review
-      final m = await http.get(
-        Uri.parse('$_baseUrl/reviews/my?product_id=${widget.productId}'),
-        headers: _headers(tok),
-      );
-      if (m.statusCode >= 200 && m.statusCode < 300) {
-        final j = jsonDecode(m.body);
-        final data = (j is Map && j['data'] is Map) ? (j['data'] as Map) : null;
-        if (data != null) {
-          _my = Map<String, dynamic>.from(data);
-          _rating = int.tryParse('${_my?['rating'] ?? 5}') ?? 5;
-          _komentar.text = (_my?['komentar'] ?? '').toString();
+      final myRes = await _getJsonSmart([
+        'reviews/my?product_id=${widget.productId}',
+        'reviews/my/${widget.productId}',
+      ]);
+
+      if (myRes['ok'] == true) {
+        final m = _extractMap(myRes);
+        _my = m;
+
+        if (m != null) {
+          _rating = int.tryParse('${m['rating'] ?? 5}') ?? 5;
+          _komentar.text = (m['komentar'] ?? '').toString();
         }
+      } else {
+        _my = null;
       }
+    } catch (e) {
+      _snack('Gagal memuat ulasan: $e');
     } finally {
       if (mounted) setState(() => _loading = false);
     }
   }
 
   Future<void> _submit() async {
-    final tok = await _token();
-    if (tok == null || tok.isEmpty) {
-      _snack('Token tidak ditemukan, silakan login ulang');
-      return;
-    }
+    if (_busy) return;
 
     if (_rating < 1 || _rating > 5) {
       _snack('Rating harus 1..5');
@@ -118,28 +142,27 @@ class _UserReviewPageState extends State<UserReviewPage> {
 
     setState(() => _busy = true);
     try {
-      final r = await http.post(
-        Uri.parse('$_baseUrl/reviews/create'),
-        headers: _headers(tok),
-        body: jsonEncode({
+      final r = await _postSmart(
+        'reviews/create',
+        {
           'product_id': widget.productId,
           'rating': _rating,
           'komentar': _komentar.text.trim(),
-        }),
+        },
+        {
+          'product_id': widget.productId.toString(),
+          'rating': _rating.toString(),
+          'komentar': _komentar.text.trim(),
+        },
       );
 
-      if (r.statusCode >= 200 && r.statusCode < 300) {
+      if (r['ok'] == true) {
         _snack('Ulasan tersimpan');
         await _load();
         return;
       }
 
-      String msg = 'Gagal menyimpan ulasan';
-      try {
-        final j = jsonDecode(r.body);
-        if (j is Map && j['message'] != null) msg = '${j['message']}';
-      } catch (_) {}
-      _snack(msg);
+      _snack((r['message'] ?? 'Gagal menyimpan ulasan').toString());
     } finally {
       if (mounted) setState(() => _busy = false);
     }

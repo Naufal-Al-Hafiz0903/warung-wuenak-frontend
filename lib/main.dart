@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'features/presentation/login_page.dart';
+import 'features/presentation/change_password_page.dart';
 import 'core/guards/role_guard.dart';
 import 'core/theme/app_theme.dart';
 
@@ -10,6 +11,7 @@ import 'seller/presentation/pages/seller_product_add_page.dart';
 import 'seller/presentation/pages/seller_orders_page.dart';
 import 'seller/presentation/pages/seller_toko_page.dart';
 import 'seller/presentation/pages/seller_profile_page.dart';
+import 'seller/presentation/pages/seller_categories_page.dart';
 
 import 'admin/presentation/layout/admin_layout.dart';
 import 'user/presentation/pages/user_entry_page.dart';
@@ -30,6 +32,9 @@ class MyApp extends StatelessWidget {
       routes: {
         '/': (_) => const LoginPage(),
         '/login': (_) => const LoginPage(),
+
+        // NEW ✅
+        '/change-password': (_) => const ChangePasswordPage(),
 
         // USER
         '/user': (_) =>
@@ -62,6 +67,11 @@ class MyApp extends StatelessWidget {
         // ADMIN
         '/admin': (_) =>
             const RoleGuard(requiredRole: 'admin', child: AdminLayout()),
+        // ✅ NEW: Categories
+        '/seller/categories': (_) => const RoleGuard(
+          requiredRole: 'penjual',
+          child: SellerCategoriesPage(),
+        ),
       },
       initialRoute: '/',
     );

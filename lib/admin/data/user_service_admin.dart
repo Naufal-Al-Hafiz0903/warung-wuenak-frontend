@@ -24,4 +24,19 @@ class UserServiceAdmin {
 
     return [];
   }
+
+  // ============================================================
+  // ✅ NEW: Reset Password by Admin
+  // POST /users/reset-password
+  // body: { user_id, new_password }
+  // ============================================================
+  static Future<Map<String, dynamic>> resetPasswordByAdmin({
+    required int userId,
+    required String newPassword,
+  }) async {
+    return AdminHttp.postJson('users/reset-password', {
+      'user_id': userId,
+      'new_password': newPassword,
+    });
+  }
 }
