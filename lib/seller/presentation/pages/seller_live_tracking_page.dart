@@ -2,39 +2,44 @@ import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 
-import '../../data/user_tracking_poller.dart';
+import '../../data/seller_tracking_poller.dart';
 
-class UserTrackingPage extends StatefulWidget {
-  final Map<String, dynamic> user;
+class SellerLiveTrackingPage extends StatefulWidget {
   final int orderId;
 
-  const UserTrackingPage({
-    super.key,
-    required this.user,
-    required this.orderId,
-  });
+  const SellerLiveTrackingPage({super.key, required this.orderId});
 
   @override
-  State<UserTrackingPage> createState() => _UserTrackingPageState();
+  State<SellerLiveTrackingPage> createState() => _SellerLiveTrackingPageState();
 }
 
-class _UserTrackingPageState extends State<UserTrackingPage> {
+class _SellerLiveTrackingPageState extends State<SellerLiveTrackingPage> {
   final MapController _map = MapController();
 
-  UserTrackingPoller? _poller;
+  SellerTrackingPoller? _poller;
 
   String _status = '-';
+  String _courierName = '-';
+  String _lastUpdate = '-';
+
   LatLng? _courier;
   LatLng? _buyer;
 
   String? _error;
   bool _fitOnce = false;
 
+  bool _isValidLatLng(double lat, double lng) {
+    if (!lat.isFinite || !lng.isFinite) return false;
+    if (lat.abs() > 90) return false;
+    if (lng.abs() > 180) return false;
+    return true;
+  }
+
   @override
   void initState() {
     super.initState();
 
-    _poller = UserTrackingPoller(
+    _poller = SellerTrackingPoller(
       orderId: widget.orderId,
       onLocation: (loc) {
         if (!mounted) return;
@@ -43,24 +48,36 @@ class _UserTrackingPageState extends State<UserTrackingPage> {
         final lat = double.tryParse('${loc['lat']}');
         final lng = double.tryParse('${loc['lng']}');
         if (lat == null || lng == null) return;
+        if (!_isValidLatLng(lat, lng)) return;
 
-        setState(() => _courier = LatLng(lat, lng));
-        _tryFit();
+        setState(() {
+          _courier = LatLng(lat, lng);
+          _lastUpdate = (loc['updated_at'] ?? '-').toString();
+        });
+
+        _tryFitOrMoveSafe();
       },
-      onStatus: (st, shipment) {
+      onStatus: (st, payload) {
         if (!mounted) return;
+
         setState(() {
           _status = st.isEmpty ? '-' : st;
           _error = null;
         });
 
-        if (shipment != null) {
-          final blat = double.tryParse('${shipment['buyer_lat']}');
-          final blng = double.tryParse('${shipment['buyer_lng']}');
-          if (blat != null && blng != null) {
-            setState(() => _buyer = LatLng(blat, blng));
-            _tryFit();
-          }
+        if (payload != null) {
+          final courierName = (payload['courier_name'] ?? '-').toString();
+          final blat = double.tryParse('${payload['buyer_lat']}');
+          final blng = double.tryParse('${payload['buyer_lng']}');
+
+          setState(() {
+            _courierName = courierName.isEmpty ? '-' : courierName;
+            if (blat != null && blng != null && _isValidLatLng(blat, blng)) {
+              _buyer = LatLng(blat, blng);
+            }
+          });
+
+          _tryFitOrMoveSafe();
         }
       },
       onError: (msg) {
@@ -78,64 +95,59 @@ class _UserTrackingPageState extends State<UserTrackingPage> {
     super.dispose();
   }
 
-  void _tryFit() {
+  void _tryFitOrMoveSafe() {
     if (_fitOnce) return;
 
     final a = _courier;
     final b = _buyer;
     if (a == null || b == null) return;
 
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      if (_fitOnce) return;
+    _fitOnce = true;
 
+    WidgetsBinding.instance.addPostFrameCallback((_) {
       final distM = const Distance().as(LengthUnit.Meter, a, b);
 
-      try {
-        if (distM.isNaN || distM.isInfinite || distM < 10) {
+      // Jika kurir dan tujuan sama/terlalu dekat, jangan fitCamera karena bisa menghasilkan zoom Infinity/NaN
+      if (distM < 5) {
+        try {
           _map.move(a, 16);
-          _fitOnce = true;
-          return;
-        }
+        } catch (_) {}
+        return;
+      }
 
-        final sw = LatLng(
-          a.latitude < b.latitude ? a.latitude : b.latitude,
-          a.longitude < b.longitude ? a.longitude : b.longitude,
-        );
-        final ne = LatLng(
-          a.latitude > b.latitude ? a.latitude : b.latitude,
-          a.longitude > b.longitude ? a.longitude : b.longitude,
-        );
+      final sw = LatLng(
+        a.latitude < b.latitude ? a.latitude : b.latitude,
+        a.longitude < b.longitude ? a.longitude : b.longitude,
+      );
+      final ne = LatLng(
+        a.latitude > b.latitude ? a.latitude : b.latitude,
+        a.longitude > b.longitude ? a.longitude : b.longitude,
+      );
 
+      try {
         _map.fitCamera(
           CameraFit.bounds(
             bounds: LatLngBounds(sw, ne),
             padding: const EdgeInsets.all(44),
           ),
         );
-
-        _fitOnce = true;
       } catch (_) {
+        // Fallback aman jika fitCamera gagal
         try {
-          final mid = LatLng(
-            (a.latitude + b.latitude) / 2,
-            (a.longitude + b.longitude) / 2,
-          );
-          _map.move(mid, 16);
-          _fitOnce = true;
-        } catch (_) {
-          // jika masih gagal, biarkan map pada posisi default
-        }
+          _map.move(a, 15);
+        } catch (_) {}
       }
     });
   }
 
   @override
   Widget build(BuildContext context) {
+    final center = _courier ?? _buyer ?? const LatLng(-6.2, 106.816666);
+
     return Scaffold(
       backgroundColor: const Color(0xFFF6F3FF),
       appBar: AppBar(
-        title: Text('Tracking Order #${widget.orderId}'),
+        title: Text('Live Tracking Order #${widget.orderId}'),
         elevation: 0,
         foregroundColor: Colors.white,
         backgroundColor: Colors.transparent,
@@ -153,11 +165,7 @@ class _UserTrackingPageState extends State<UserTrackingPage> {
         children: [
           FlutterMap(
             mapController: _map,
-            options: MapOptions(
-              initialCenter:
-                  _courier ?? _buyer ?? const LatLng(-6.2, 106.816666),
-              initialZoom: 13,
-            ),
+            options: MapOptions(initialCenter: center, initialZoom: 13),
             children: [
               TileLayer(
                 urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
@@ -174,8 +182,8 @@ class _UserTrackingPageState extends State<UserTrackingPage> {
                   if (_courier != null)
                     Marker(
                       point: _courier!,
-                      width: 86,
-                      height: 96,
+                      width: 78,
+                      height: 92,
                       child: const _Pin(
                         label: 'KURIR',
                         icon: Icons.delivery_dining_rounded,
@@ -184,8 +192,8 @@ class _UserTrackingPageState extends State<UserTrackingPage> {
                   if (_buyer != null)
                     Marker(
                       point: _buyer!,
-                      width: 86,
-                      height: 96,
+                      width: 78,
+                      height: 92,
                       child: const _Pin(
                         label: 'TUJUAN',
                         icon: Icons.location_on_rounded,
@@ -229,18 +237,38 @@ class _UserTrackingPageState extends State<UserTrackingPage> {
                       fontSize: 16,
                     ),
                   ),
-                  if (_error != null) ...[
+                  const SizedBox(height: 8),
+                  Text(
+                    'Kurir: $_courierName',
+                    style: const TextStyle(
+                      color: Colors.black87,
+                      fontWeight: FontWeight.w800,
+                      fontSize: 13,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    'Update terakhir: $_lastUpdate',
+                    style: const TextStyle(
+                      color: Colors.black54,
+                      fontWeight: FontWeight.w700,
+                      fontSize: 12,
+                    ),
+                  ),
+                  if (_courier == null) ...[
                     const SizedBox(height: 6),
+                    const Text(
+                      'Lokasi kurir belum tersedia. Pastikan aplikasi kurir mengirim live location.',
+                      style: TextStyle(color: Colors.black54, fontSize: 12),
+                    ),
+                  ],
+                  if (_error != null) ...[
+                    const SizedBox(height: 8),
                     Text(
                       _error!,
                       style: const TextStyle(color: Colors.black54),
                     ),
                   ],
-                  const SizedBox(height: 10),
-                  const Text(
-                    'Tracking hemat server: live-location dipoll adaptif, status dipoll lebih jarang.',
-                    style: TextStyle(color: Colors.black54, fontSize: 12),
-                  ),
                 ],
               ),
             ),
@@ -286,14 +314,9 @@ class _Pin extends StatelessWidget {
             borderRadius: BorderRadius.circular(999),
             border: Border.all(color: const Color(0xFFEDE9FE)),
           ),
-          child: FittedBox(
-            fit: BoxFit.scaleDown,
-            child: Text(
-              label,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 11),
-            ),
+          child: Text(
+            label,
+            style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 11),
           ),
         ),
       ],

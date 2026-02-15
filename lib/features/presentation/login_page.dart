@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../../core/network/api.dart';
 import '../../features/data/auth_service.dart';
+import '../../features/data/email_verification_service.dart';
 import 'register_page.dart';
 
 import 'package:warung_wuenak/services/me_location_service.dart';
@@ -57,6 +58,16 @@ class _LoginPageState extends State<LoginPage> {
     );
   }
 
+  bool _toBool(dynamic v, {bool defaultValue = true}) {
+    if (v == null) return defaultValue;
+    if (v is bool) return v;
+    if (v is num) return v != 0;
+    final s = v.toString().trim().toLowerCase();
+    if (s == 'true' || s == '1' || s == 'yes' || s == 'y') return true;
+    if (s == 'false' || s == '0' || s == 'no' || s == 'n') return false;
+    return defaultValue;
+  }
+
   Future<void> _captureLocationAfterLogin() async {
     try {
       final r = await MeLocationService.captureAndSend();
@@ -70,11 +81,11 @@ class _LoginPageState extends State<LoginPage> {
         if (c.isNotEmpty && area != null && radius != null) {
           final km = (radius / 1000).toStringAsFixed(1);
           _snack(
-            'Lokasi: $c ✅ | Luas± ${area.toStringAsFixed(2)} km² | Radius max: $km km',
+            'Lokasi: $c | Luas± ${area.toStringAsFixed(2)} km² | Radius max: $km km',
             bg: Colors.green,
           );
         } else if (c.isNotEmpty) {
-          _snack('Lokasi terdeteksi: $c ✅', bg: Colors.green);
+          _snack('Lokasi terdeteksi: $c', bg: Colors.green);
         } else {
           _snack(
             'Koordinat tersimpan, kota tidak terdeteksi',
@@ -90,20 +101,78 @@ class _LoginPageState extends State<LoginPage> {
     }
   }
 
+  Future<void> _redirectByRole(String level) async {
+    if (level == "penjual") {
+      Navigator.pushNamedAndRemoveUntil(context, '/seller', (_) => false);
+    } else if (level == "admin") {
+      Navigator.pushNamedAndRemoveUntil(context, '/admin', (_) => false);
+    } else if (level == "kurir") {
+      Navigator.pushNamedAndRemoveUntil(context, '/courier', (_) => false);
+    } else {
+      Navigator.pushNamedAndRemoveUntil(context, '/user', (_) => false);
+    }
+  }
+
+  Future<void> _handleUnverifiedEmail(String email) async {
+    final e = email.trim().toLowerCase();
+    if (e.isEmpty) {
+      _snack(
+        'Email belum terverifikasi. Silakan verifikasi email.',
+        bg: Colors.orange,
+      );
+      Navigator.pushNamed(context, '/verify-email');
+      return;
+    }
+
+    _snack(
+      'Email belum terverifikasi. Mengirim kode verifikasi...',
+      bg: Colors.orange,
+    );
+
+    try {
+      final svc = EmailVerificationService();
+      await svc.sendCode(email: e);
+
+      if (!mounted) return;
+      _snack(
+        'Kode verifikasi sudah dikirim. Masukkan kode.',
+        bg: Colors.orange,
+      );
+
+      Navigator.pushNamedAndRemoveUntil(
+        context,
+        '/verify-email/code',
+        (_) => false,
+        arguments: {'email': e},
+      );
+    } on EmailVerificationException catch (ex) {
+      if (!mounted) return;
+      _snack('Gagal kirim kode verifikasi: ${ex.message}', bg: Colors.red);
+
+      Navigator.pushNamed(context, '/verify-email', arguments: {'email': e});
+    } catch (ex) {
+      if (!mounted) return;
+      _snack('Gagal kirim kode verifikasi: $ex', bg: Colors.red);
+
+      Navigator.pushNamed(context, '/verify-email', arguments: {'email': e});
+    }
+  }
+
   Future<void> doLogin() async {
     if (loading) return;
 
-    final email = emailC.text.trim();
+    final emailInputRaw = emailC.text.trim();
+    final emailInput = emailInputRaw.toLowerCase();
     final pass = passC.text;
 
-    if (email.isEmpty || pass.isEmpty) {
+    if (emailInput.isEmpty || pass.isEmpty) {
       _snack("Email dan password wajib diisi");
       return;
     }
 
     setState(() => loading = true);
 
-    final res = await AuthService.login(email, pass);
+    final res = await AuthService.login(emailInput, pass);
 
     if (!mounted) return;
     setState(() => loading = false);
@@ -116,36 +185,56 @@ class _LoginPageState extends State<LoginPage> {
       if (!mounted) return;
 
       if (check["ok"] != true) {
+        final msg = (check["message"] ?? "").toString().toLowerCase();
+        if (msg.contains("email belum diverifikasi")) {
+          await _handleUnverifiedEmail(emailInput);
+          return;
+        }
+
         _snack(
-          "Login berhasil, tapi JWT TIDAK VALID:\n${_prettyErr(check)}",
+          "Login berhasil, tapi JWT tidak valid:\n${_prettyErr(check)}",
           bg: Colors.red,
         );
         return;
       }
 
-      final String level = (res["data"]?["level"] ?? "user").toString();
+      final data = (res["data"] is Map<String, dynamic>)
+          ? (res["data"] as Map<String, dynamic>)
+          : <String, dynamic>{};
+
+      final String level = (data["level"] ?? "user").toString();
+      final String email = (data["email"] ?? emailInput)
+          .toString()
+          .trim()
+          .toLowerCase();
+
+      final bool emailVerified = _toBool(
+        data["email_verified"] ?? data["emailVerified"],
+        defaultValue: true,
+      );
 
       _snack(
         isJwt
-            ? "Login berhasil & JWT VALID ✅"
-            : "Login berhasil tapi token BUKAN JWT ❌",
+            ? "Login berhasil & token valid"
+            : "Login berhasil tapi token bukan JWT",
         bg: isJwt ? Colors.green : Colors.orange,
       );
 
-      await _captureLocationAfterLogin();
-
-      if (!mounted) return;
-
-      if (level == "penjual") {
-        Navigator.pushNamedAndRemoveUntil(context, '/seller', (_) => false);
-      } else if (level == "admin") {
-        Navigator.pushNamedAndRemoveUntil(context, '/admin', (_) => false);
-      } else if (level == "kurir") {
-        Navigator.pushNamedAndRemoveUntil(context, '/courier', (_) => false);
-      } else {
-        Navigator.pushNamedAndRemoveUntil(context, '/user', (_) => false);
+      if (!emailVerified) {
+        await _handleUnverifiedEmail(email);
+        return;
       }
 
+      await _captureLocationAfterLogin();
+      if (!mounted) return;
+
+      await _redirectByRole(level);
+      return;
+    }
+
+    final msg = (res["message"] ?? "").toString().toLowerCase();
+    if (msg.contains("email belum diverifikasi")) {
+      await _handleUnverifiedEmail(emailInput);
       return;
     }
 
@@ -243,7 +332,6 @@ class _LoginPageState extends State<LoginPage> {
                             ),
                           ),
                           const SizedBox(height: 18),
-
                           TextField(
                             controller: emailC,
                             keyboardType: TextInputType.emailAddress,
@@ -255,7 +343,6 @@ class _LoginPageState extends State<LoginPage> {
                             ),
                           ),
                           const SizedBox(height: 12),
-
                           TextField(
                             controller: passC,
                             obscureText: _obscure,
@@ -276,9 +363,7 @@ class _LoginPageState extends State<LoginPage> {
                               ),
                             ),
                           ),
-
                           const SizedBox(height: 18),
-
                           SizedBox(
                             height: 48,
                             child: ElevatedButton(
@@ -309,9 +394,7 @@ class _LoginPageState extends State<LoginPage> {
                                     ),
                             ),
                           ),
-
                           const SizedBox(height: 10),
-
                           TextButton(
                             onPressed: () {
                               Navigator.push(
@@ -332,6 +415,11 @@ class _LoginPageState extends State<LoginPage> {
                               '/change-password',
                             ),
                             child: const Text('Ganti Password'),
+                          ),
+                          TextButton(
+                            onPressed: () =>
+                                Navigator.pushNamed(context, '/verify-email'),
+                            child: const Text('Verifikasi Email'),
                           ),
                         ],
                       ),

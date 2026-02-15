@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
-import '../../../features/data/auth_service.dart';
+import '../data/auth_service.dart';
+import '../data/email_verification_service.dart';
 
 class RegisterPage extends StatefulWidget {
   const RegisterPage({super.key});
@@ -18,8 +19,7 @@ class _RegisterPageState extends State<RegisterPage> {
   bool loading = false;
   bool _obscure = true;
 
-  // ✅ ROLE: tampil "Pembeli", tapi kirim "user"
-  String _role = 'user'; // user|penjual
+  String _role = 'user';
 
   bool _isEmailValid(String email) {
     final e = email.trim();
@@ -44,7 +44,7 @@ class _RegisterPageState extends State<RegisterPage> {
     final nomor = nomorC.text.trim();
     final alamat = alamatC.text.trim();
     final email = emailC.text.trim();
-    final pass = passC.text; // password jangan di-trim
+    final pass = passC.text;
 
     if (name.isEmpty || email.isEmpty || pass.isEmpty) {
       _snack("Nama, email, dan password wajib diisi");
@@ -65,18 +65,46 @@ class _RegisterPageState extends State<RegisterPage> {
         alamatUser: alamat,
         email: email,
         password: pass,
-        level: _role, // ✅ kirim role pilihan user
+        level: _role,
       );
 
       if (!mounted) return;
 
+      final ok = res["ok"] == true;
       _snack(
         res["message"]?.toString() ?? "Register selesai",
-        bg: res["ok"] == true ? Colors.green : null,
+        bg: ok ? Colors.green : null,
       );
 
-      if (res["ok"] == true) {
-        Navigator.pop(context);
+      if (ok) {
+        try {
+          final svc = EmailVerificationService();
+          await svc.sendCode(email: email);
+
+          if (!mounted) return;
+          _snack(
+            'Kode verifikasi sudah dikirim ke email. Silakan verifikasi.',
+            bg: Colors.orange,
+          );
+
+          Navigator.pushNamedAndRemoveUntil(
+            context,
+            '/verify-email/code',
+            (_) => false,
+            arguments: {'email': email},
+          );
+          return;
+        } on EmailVerificationException catch (e) {
+          if (!mounted) return;
+          _snack('Gagal kirim kode verifikasi: ${e.message}', bg: Colors.red);
+          Navigator.pop(context);
+          return;
+        } catch (e) {
+          if (!mounted) return;
+          _snack('Gagal kirim kode verifikasi: $e', bg: Colors.red);
+          Navigator.pop(context);
+          return;
+        }
       }
     } catch (e) {
       if (!mounted) return;
@@ -163,7 +191,6 @@ class _RegisterPageState extends State<RegisterPage> {
                         ),
                         const SizedBox(height: 16),
 
-                        // ✅ PILIH ROLE (Tampilan: Pembeli/Penjual)
                         DropdownButtonFormField<String>(
                           value: _role,
                           decoration: _dec(

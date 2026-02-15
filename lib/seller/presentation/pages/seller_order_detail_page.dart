@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../../../core/config/app_config.dart';
 import '../../data/seller_orders_service.dart';
 import '../layout/seller_layout.dart';
+import 'seller_live_tracking_page.dart';
 
 class SellerOrderDetailPage extends StatefulWidget {
   final int orderId;
@@ -15,8 +16,7 @@ class _SellerOrderDetailPageState extends State<SellerOrderDetailPage> {
   bool _loading = true;
   String? _error;
 
-  Map<String, dynamic>?
-  _data; // {order,payment,shipment,toko,items,distance_km,distance_m,...}
+  Map<String, dynamic>? _data;
 
   @override
   void initState() {
@@ -207,8 +207,7 @@ class _SellerOrderDetailPageState extends State<SellerOrderDetailPage> {
         : <Map<String, dynamic>>[];
 
     final status = (order['status'] ?? '').toString().toLowerCase().trim();
-    final createdAt = (order['created_at'] ?? '')
-        .toString(); // ✅ tanggal dari DB
+    final createdAt = (order['created_at'] ?? '').toString();
     final buyer = (order['pembeli'] ?? '-').toString();
     final alamat = (order['alamat_pengiriman'] ?? '-').toString();
     final metode = (order['metode_pembayaran'] ?? '-').toString();
@@ -229,6 +228,9 @@ class _SellerOrderDetailPageState extends State<SellerOrderDetailPage> {
     final shipStatus = (shipment['shipment_status'] ?? '-').toString();
     final shippedAt = (shipment['shipped_at'] ?? '').toString();
     final deliveredAt = (shipment['delivered_at'] ?? '').toString();
+
+    final courierUserId = int.tryParse('${shipment['courier_user_id'] ?? ''}');
+    final canTrack = courierUserId != null && courierUserId > 0;
 
     return [
       _card(
@@ -333,7 +335,7 @@ class _SellerOrderDetailPageState extends State<SellerOrderDetailPage> {
             ),
             const SizedBox(height: 8),
             const Text(
-              'Catatan: jarak dihitung dari koordinat TOKO (toko.lat/lng) → buyer_lat/buyer_lng.',
+              'Catatan: jarak dihitung dari koordinat TOKO (toko.lat/lng) ke buyer_lat/buyer_lng.',
               style: TextStyle(
                 color: Colors.black45,
                 fontWeight: FontWeight.w700,
@@ -387,6 +389,50 @@ class _SellerOrderDetailPageState extends State<SellerOrderDetailPage> {
           ],
         ),
       ),
+      const SizedBox(height: 12),
+      if (canTrack)
+        _card(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Live Tracking Kurir',
+                style: TextStyle(fontWeight: FontWeight.w900),
+              ),
+              const SizedBox(height: 8),
+              const Text(
+                'Lihat posisi kurir secara live pada peta. Lokasi akan muncul jika aplikasi kurir mengirim live location.',
+                style: TextStyle(
+                  color: Colors.black54,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(height: 12),
+              SizedBox(
+                width: double.infinity,
+                child: FilledButton(
+                  onPressed: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) =>
+                            SellerLiveTrackingPage(orderId: widget.orderId),
+                      ),
+                    );
+                  },
+                  child: const Text('Buka Live Tracking'),
+                ),
+              ),
+            ],
+          ),
+        )
+      else
+        _card(
+          child: const Text(
+            'Live tracking belum tersedia karena kurir belum ditugaskan pada shipment ini.',
+            style: TextStyle(fontWeight: FontWeight.w900),
+          ),
+        ),
       const SizedBox(height: 12),
       _card(
         child: Column(

@@ -33,6 +33,7 @@ class UserOrderModel {
 
   static int _toInt(dynamic v) => int.tryParse(v?.toString() ?? '') ?? 0;
   static num _toNum(dynamic v) => num.tryParse(v?.toString() ?? '') ?? 0;
+
   static double? _toDoubleN(dynamic v) {
     if (v == null) return null;
     return double.tryParse(v.toString());
@@ -65,10 +66,8 @@ class UserOrderModel {
       ongkir: _toNum(j['ongkir']),
       kurir: _toStrN(j['kurir']),
       createdAt: _toStr(j['created_at'] ?? j['createdAt'], ''),
-
       buyerLat: _toDoubleN(j['buyer_lat'] ?? j['buyerLat']),
       buyerLng: _toDoubleN(j['buyer_lng'] ?? j['buyerLng']),
-
       namaToko: _toStrN(j['nama_toko'] ?? j['namaToko']),
       sellerLat: _toDoubleN(j['seller_lat'] ?? j['sellerLat']),
       sellerLng: _toDoubleN(j['seller_lng'] ?? j['sellerLng']),

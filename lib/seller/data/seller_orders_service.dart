@@ -68,6 +68,10 @@ class SellerOrdersService {
     return UserHttp.getJson('orders/seller/detail?order_id=$orderId');
   }
 
+  static Future<Map<String, dynamic>> fetchTracking(int orderId) async {
+    return UserHttp.getJson('orders/seller/tracking?order_id=$orderId');
+  }
+
   static Future<Map<String, dynamic>> fetchSellerOrderDetail(
     int orderId,
   ) async {

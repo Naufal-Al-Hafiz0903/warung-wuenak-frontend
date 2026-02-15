@@ -2,10 +2,14 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 
 import '../../../models/user_order_model.dart';
-import '../../data/user_orders_service.dart';
+import '../data/user_orders_service.dart';
 
 class UserOrdersPage extends StatefulWidget {
-  const UserOrdersPage({super.key});
+  // dibuat opsional agar kompatibel: bisa dipanggil UserOrdersPage()
+  // atau UserOrdersPage(user: user)
+  final Map<String, dynamic>? user;
+
+  const UserOrdersPage({super.key, this.user});
 
   @override
   State<UserOrdersPage> createState() => _UserOrdersPageState();

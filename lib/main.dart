@@ -2,6 +2,9 @@ import 'package:flutter/material.dart';
 
 import 'features/presentation/login_page.dart';
 import 'features/presentation/change_password_page.dart';
+import 'features/presentation/email_verification_request_page.dart';
+import 'features/presentation/email_verification_code_page.dart';
+
 import 'core/guards/role_guard.dart';
 import 'core/theme/app_theme.dart';
 
@@ -33,18 +36,17 @@ class MyApp extends StatelessWidget {
         '/': (_) => const LoginPage(),
         '/login': (_) => const LoginPage(),
 
-        // NEW ✅
         '/change-password': (_) => const ChangePasswordPage(),
 
-        // USER
+        '/verify-email': (_) => const EmailVerificationRequestPage(),
+        '/verify-email/code': (_) => const EmailVerificationCodePage(),
+
         '/user': (_) =>
             const RoleGuard(requiredRole: 'user', child: UserEntryPage()),
 
-        // COURIER
         '/courier': (_) =>
             const RoleGuard(requiredRole: 'kurir', child: CourierEntryPage()),
 
-        // SELLER
         '/seller': (_) =>
             const RoleGuard(requiredRole: 'penjual', child: SellerDashboard()),
         '/seller/products': (_) => const RoleGuard(
@@ -64,10 +66,9 @@ class MyApp extends StatelessWidget {
           child: SellerProfilePage(),
         ),
 
-        // ADMIN
         '/admin': (_) =>
             const RoleGuard(requiredRole: 'admin', child: AdminLayout()),
-        // ✅ NEW: Categories
+
         '/seller/categories': (_) => const RoleGuard(
           requiredRole: 'penjual',
           child: SellerCategoriesPage(),

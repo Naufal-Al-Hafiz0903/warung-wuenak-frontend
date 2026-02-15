@@ -67,7 +67,12 @@ class _CourierTrackingDetailPageState extends State<CourierTrackingDetailPage> {
 
   Map<String, dynamic>? _buyerMap() {
     final b = _data?['buyer'];
-    if (b is Map) return Map<String, dynamic>.from(b as Map);
+    if (b is Map) return Map<String, dynamic>.from(b); // ✅ no cast
+    return null;
+  }
+
+  Map<String, dynamic>? _asMap(dynamic v) {
+    if (v is Map) return Map<String, dynamic>.from(v); // ✅ no cast
     return null;
   }
 
@@ -96,6 +101,11 @@ class _CourierTrackingDetailPageState extends State<CourierTrackingDetailPage> {
     if (d == null) return;
 
     final buyer = _buyerMap() ?? {};
+
+    // ✅ FIX: buyerName harus dihitung DI SINI (bukan ambil dari build())
+    final buyerNameValue =
+        _pickString(buyer, ['name', 'nama', 'nama_lengkap']) ?? '-';
+
     final address =
         _pickString(d, [
           'alamat_pengiriman',
@@ -119,6 +129,80 @@ class _CourierTrackingDetailPageState extends State<CourierTrackingDetailPage> {
       'longitude',
     ]);
 
+    // ✅ Pickup (Toko)
+    final tokoMap = _asMap(d['toko']);
+    final pickupLat =
+        _pickDouble(d, [
+          'pickup_lat',
+          'toko_lat',
+          'store_lat',
+          'origin_lat',
+          'seller_lat',
+          'shop_lat',
+        ]) ??
+        (tokoMap != null
+            ? _pickDouble(tokoMap, [
+                'lat',
+                'toko_lat',
+                'store_lat',
+                'origin_lat',
+              ])
+            : null);
+
+    final pickupLng =
+        _pickDouble(d, [
+          'pickup_lng',
+          'toko_lng',
+          'store_lng',
+          'origin_lng',
+          'seller_lng',
+          'shop_lng',
+        ]) ??
+        (tokoMap != null
+            ? _pickDouble(tokoMap, [
+                'lng',
+                'toko_lng',
+                'store_lng',
+                'origin_lng',
+              ])
+            : null);
+
+    final pickupName =
+        _pickString(d, [
+          'pickup_name',
+          'toko_name',
+          'nama_toko',
+          'store_name',
+          'shop_name',
+        ]) ??
+        (tokoMap != null
+            ? _pickString(tokoMap, [
+                'name',
+                'nama',
+                'toko_name',
+                'nama_toko',
+                'store_name',
+              ])
+            : null);
+
+    final pickupAddress =
+        _pickString(d, [
+          'pickup_address',
+          'toko_address',
+          'alamat_toko',
+          'store_address',
+          'shop_address',
+          'origin_address',
+        ]) ??
+        (tokoMap != null
+            ? _pickString(tokoMap, [
+                'address',
+                'alamat',
+                'alamat_toko',
+                'toko_address',
+              ])
+            : null);
+
     if (address.trim().isEmpty && (lat == null || lng == null)) {
       _snack('Alamat/koordinat tujuan belum tersedia dari server.');
       return;
@@ -130,10 +214,14 @@ class _CourierTrackingDetailPageState extends State<CourierTrackingDetailPage> {
         builder: (_) => CourierMapsPage(
           title: 'Rute Pengantaran',
           orderId: widget.orderId,
-          buyerName: _pickString(buyer, ['name', 'nama']) ?? 'Pembeli',
+          buyerName: buyerNameValue, // ✅ FIXED
           buyerAddress: address.trim().isEmpty ? null : address,
           buyerLat: lat,
           buyerLng: lng,
+          pickupName: pickupName,
+          pickupAddress: pickupAddress,
+          pickupLat: pickupLat,
+          pickupLng: pickupLng,
         ),
       ),
     );
@@ -148,7 +236,8 @@ class _CourierTrackingDetailPageState extends State<CourierTrackingDetailPage> {
     final courier = (d['kurir'] ?? d['courier'] ?? '-').toString();
     final resi = (d['nomor_resi'] ?? d['tracking_number'] ?? '-').toString();
 
-    final buyerName = _pickString(buyer, ['name', 'nama']) ?? '-';
+    final buyerName =
+        _pickString(buyer, ['name', 'nama', 'nama_lengkap']) ?? '-';
     final buyerAddr =
         _pickString(d, [
           'alamat_pengiriman',

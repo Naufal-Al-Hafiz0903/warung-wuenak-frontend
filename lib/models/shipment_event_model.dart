@@ -1,6 +1,6 @@
 class ShipmentEventModel {
-  final String
-  status; // diproses|dikemas|dikirim|dalam_perjalanan|sampai|selesai|dibatalkan
+  // diproses|dikemas|dikirim|dalam_perjalanan|sampai|selesai|dibatalkan
+  final String status;
   final String? description;
   final String? location;
   final String createdAt;

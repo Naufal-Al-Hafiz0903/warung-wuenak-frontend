@@ -1,5 +1,5 @@
-import '../../services/user_http.dart';
-import '../../models/shipment_tracking_model.dart';
+import '/../services/user_http.dart';
+import '/../models/shipment_tracking_model.dart';
 
 class CourierShipmentsService {
   // =========================
@@ -27,7 +27,7 @@ class CourierShipmentsService {
   ];
 
   // =========================
-  // ✅ LIVE LOCATION
+  // ✅ LIVE LOCATION (BARU)
   // =========================
   static const String _livePush = 'shipments/live-location';
   static String _liveGetByOrder(int orderId) =>
@@ -249,6 +249,7 @@ class CourierShipmentsService {
 
     // =========================
     // Koordinat awal (toko/pickup)
+    // Backend belum tentu kirim sekarang, tapi client sudah siap.
     // =========================
     out['pickup_lat'] ??= _pickNum(out, [
       'pickup_lat',

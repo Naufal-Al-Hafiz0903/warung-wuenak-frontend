@@ -3,12 +3,12 @@ import 'package:geolocator/geolocator.dart';
 
 import '../../../core/location/device_location_service.dart';
 import '../../../services/user_http.dart';
-import '../../data/checkout_service.dart'; // pastikan path ini sesuai folder kamu
+import '../../data/checkout_service.dart';
+import '../../../features/presentation/payment_page.dart';
 
 class UserCheckoutPage extends StatefulWidget {
   final Map<String, dynamic> user;
 
-  /// prefill dari halaman produk (opsional)
   final String? prefillKurir;
 
   const UserCheckoutPage({super.key, required this.user, this.prefillKurir});
@@ -24,7 +24,6 @@ class _UserCheckoutPageState extends State<UserCheckoutPage> {
   String? _error;
   String? _quoteError;
 
-  // quote hasil server
   double? _distanceKm;
   int? _distanceM;
   int? _ongkir;
@@ -36,34 +35,30 @@ class _UserCheckoutPageState extends State<UserCheckoutPage> {
 
   Position? _pos;
 
-  // ✅ HANYA 3 kurir
   static const List<_CourierOption> _couriers = [
     _CourierOption(
       key: 'kurirku',
       title: 'KurirKu',
       subtitle: 'Kurir internal / toko',
-      icon: Icons.storefront_outlined,
+      badge: 'K',
     ),
     _CourierOption(
       key: 'gosend',
       title: 'GoSend',
       subtitle: 'Pengiriman cepat',
-      icon: Icons.local_shipping_outlined,
+      badge: 'G',
     ),
     _CourierOption(
       key: 'grabexpress',
       title: 'GrabExpress',
       subtitle: 'Kurir instan',
-      icon: Icons.flash_on_outlined,
+      badge: 'GR',
     ),
   ];
 
   late String _selectedKurir;
 
-  // input user
   final _alamatCtrl = TextEditingController(text: '');
-
-  // ongkir tampil (readonly)
   final _ongkirCtrl = TextEditingController(text: '0');
 
   String _metode = 'cash'; // cash|transfer|qris
@@ -75,7 +70,6 @@ class _UserCheckoutPageState extends State<UserCheckoutPage> {
     final exists = _couriers.any((c) => c.key == pre);
     _selectedKurir = exists ? pre : _couriers.first.key;
 
-    // auto quote saat buka halaman
     WidgetsBinding.instance.addPostFrameCallback(
       (_) => _refreshQuote(forceGps: true),
     );
@@ -114,12 +108,10 @@ class _UserCheckoutPageState extends State<UserCheckoutPage> {
     });
 
     try {
-      // 1) ambil GPS
       if (_pos == null || forceGps) {
         final Position p = await DeviceLocationService.getCurrentHighAccuracy();
         _pos = p;
 
-        // 2) update lokasi user -> /me/location (biar server punya data)
         final locRes = await UserHttp.postJson('me/location', {
           'lat': p.latitude,
           'lng': p.longitude,
@@ -127,7 +119,6 @@ class _UserCheckoutPageState extends State<UserCheckoutPage> {
         });
 
         if (locRes['ok'] != true) {
-          // tidak memblok, hanya info
           _snack(
             'Lokasi gagal dikirim (tetap lanjut): ${locRes['message'] ?? ''}',
           );
@@ -135,7 +126,6 @@ class _UserCheckoutPageState extends State<UserCheckoutPage> {
       }
 
       final p = _pos!;
-      // 3) quote ongkir dari server
       final res = await CheckoutService.quoteOngkir(
         kurir: _selectedKurir,
         buyerLat: p.latitude,
@@ -144,10 +134,9 @@ class _UserCheckoutPageState extends State<UserCheckoutPage> {
       );
 
       if (res['ok'] != true) {
-        setState(
-          () =>
-              _quoteError = (res['message'] ?? 'Gagal ambil quote').toString(),
-        );
+        setState(() {
+          _quoteError = (res['message'] ?? 'Gagal ambil quote').toString();
+        });
         return;
       }
 
@@ -203,7 +192,6 @@ class _UserCheckoutPageState extends State<UserCheckoutPage> {
         return;
       }
 
-      // pastikan quote sudah ada
       if (_pos == null) {
         await _refreshQuote(forceGps: true);
       }
@@ -213,24 +201,20 @@ class _UserCheckoutPageState extends State<UserCheckoutPage> {
         return;
       }
 
-      // kalau di luar jangkauan, blok dari UI
       if (_withinRange == false) {
         final mx = (_maxDistanceKm ?? 0);
-        setState(
-          () => _error =
-              'Lokasi kamu di luar jangkauan pengiriman. Maksimal ${mx.toStringAsFixed(2)} km.',
-        );
+        setState(() => _error =
+            'Lokasi kamu di luar jangkauan pengiriman. Maksimal ${mx.toStringAsFixed(2)} km.');
         return;
       }
 
       final p = _pos!;
       final ongkirFinal = _ongkir ?? 0;
 
-      // checkout: gunakan /orders/checkout (single source of truth)
       final orderRes = await CheckoutService.checkoutFromCart(
         metodePembayaran: _metode,
         kurir: _selectedKurir,
-        ongkir: ongkirFinal, // optional, server tetap hitung sendiri
+        ongkir: ongkirFinal,
         alamatPengiriman: alamat,
         buyerLat: p.latitude,
         buyerLng: p.longitude,
@@ -238,8 +222,39 @@ class _UserCheckoutPageState extends State<UserCheckoutPage> {
       );
 
       if (orderRes['ok'] == true) {
-        _snack('Checkout berhasil');
         if (!mounted) return;
+
+        final data = (orderRes['data'] is Map)
+            ? Map<String, dynamic>.from(orderRes['data'])
+            : <String, dynamic>{};
+
+        final orderId = _toInt(data['order_id'], 0);
+        final totalAmount = _toInt(data['total_amount'], 0);
+
+        _snack('Checkout berhasil');
+
+        if (_metode == 'cash') {
+          Navigator.pop(context, {
+            'checkout_ok': true,
+            'kurir': _selectedKurir,
+            'lat': p.latitude,
+            'lng': p.longitude,
+          });
+          return;
+        }
+
+        final initialPay = (_metode == 'transfer') ? 'va_bca' : 'qris';
+
+        await Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => PaymentPage(
+              orderId: orderId,
+              totalAmount: totalAmount,
+              initialMethod: initialPay,
+            ),
+          ),
+        );
 
         Navigator.pop(context, {
           'checkout_ok': true,
@@ -250,9 +265,7 @@ class _UserCheckoutPageState extends State<UserCheckoutPage> {
         return;
       }
 
-      setState(
-        () => _error = (orderRes['message'] ?? 'Checkout gagal').toString(),
-      );
+      setState(() => _error = (orderRes['message'] ?? 'Checkout gagal').toString());
     } catch (e) {
       setState(() => _error = e.toString());
     } finally {
@@ -268,9 +281,7 @@ class _UserCheckoutPageState extends State<UserCheckoutPage> {
         ? '-'
         : '${_distanceKm!.toStringAsFixed(2)} km (${_distanceM ?? 0} m)';
 
-    final maxText = (_maxDistanceKm == null)
-        ? '-'
-        : '${_maxDistanceKm!.toStringAsFixed(2)} km';
+    final maxText = (_maxDistanceKm == null) ? '-' : '${_maxDistanceKm!.toStringAsFixed(2)} km';
 
     return Scaffold(
       backgroundColor: const Color(0xFFF6F3FF),
@@ -289,12 +300,12 @@ class _UserCheckoutPageState extends State<UserCheckoutPage> {
           ),
         ),
         actions: [
-          IconButton(
-            tooltip: 'Refresh Quote',
-            onPressed: (_busy || _quoteLoading)
-                ? null
-                : () => _refreshQuote(forceGps: true),
-            icon: const Icon(Icons.refresh),
+          TextButton(
+            onPressed: (_busy || _quoteLoading) ? null : () => _refreshQuote(forceGps: true),
+            child: const Text(
+              'Refresh',
+              style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800),
+            ),
           ),
         ],
       ),
@@ -316,7 +327,6 @@ class _UserCheckoutPageState extends State<UserCheckoutPage> {
                 ),
                 const SizedBox(height: 14),
 
-                // ===== Quote Panel =====
                 Container(
                   padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(
@@ -326,9 +336,18 @@ class _UserCheckoutPageState extends State<UserCheckoutPage> {
                   ),
                   child: Row(
                     children: [
-                      const Icon(
-                        Icons.route_outlined,
-                        color: Color(0xFF6D28D9),
+                      Container(
+                        width: 52,
+                        height: 52,
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF6D28D9),
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                        alignment: Alignment.center,
+                        child: const Text(
+                          'INFO',
+                          style: TextStyle(color: Colors.white, fontWeight: FontWeight.w900),
+                        ),
                       ),
                       const SizedBox(width: 10),
                       Expanded(
@@ -344,8 +363,7 @@ class _UserCheckoutPageState extends State<UserCheckoutPage> {
                             ),
                             const SizedBox(height: 4),
                             Text(
-                              'Batas maks: $maxText'
-                              '${_areaLabel != null ? " • ${_areaLabel!}" : ""}',
+                              'Batas maks: $maxText${_areaLabel != null ? " • ${_areaLabel!}" : ""}',
                               style: const TextStyle(
                                 fontWeight: FontWeight.w800,
                                 color: Color(0xFF6D28D9),
@@ -355,10 +373,7 @@ class _UserCheckoutPageState extends State<UserCheckoutPage> {
                               const SizedBox(height: 2),
                               Text(
                                 'Tipe area: $_areaType',
-                                style: const TextStyle(
-                                  color: Colors.black54,
-                                  fontSize: 12,
-                                ),
+                                style: const TextStyle(color: Colors.black54, fontSize: 12),
                               ),
                             ],
                             if (_quoteLoading) ...[
@@ -369,20 +384,14 @@ class _UserCheckoutPageState extends State<UserCheckoutPage> {
                               const SizedBox(height: 8),
                               Text(
                                 _quoteError!,
-                                style: const TextStyle(
-                                  color: Colors.red,
-                                  fontWeight: FontWeight.w800,
-                                ),
+                                style: const TextStyle(color: Colors.red, fontWeight: FontWeight.w800),
                               ),
                             ],
                             if (_withinRange == false) ...[
                               const SizedBox(height: 8),
                               const Text(
-                                '⚠ Lokasi kamu di luar jangkauan.',
-                                style: TextStyle(
-                                  color: Colors.red,
-                                  fontWeight: FontWeight.w900,
-                                ),
+                                'Lokasi kamu di luar jangkauan.',
+                                style: TextStyle(color: Colors.red, fontWeight: FontWeight.w900),
                               ),
                             ],
                           ],
@@ -401,29 +410,20 @@ class _UserCheckoutPageState extends State<UserCheckoutPage> {
 
                 const SizedBox(height: 14),
 
-                // Alamat
-                const Text(
-                  'Alamat Pengiriman',
-                  style: TextStyle(fontWeight: FontWeight.w900),
-                ),
+                const Text('Alamat Pengiriman', style: TextStyle(fontWeight: FontWeight.w900)),
                 const SizedBox(height: 8),
                 TextField(
                   controller: _alamatCtrl,
                   enabled: !_busy,
                   maxLines: 2,
                   decoration: const InputDecoration(
-                    prefixIcon: Icon(Icons.location_on_outlined),
                     hintText: 'Contoh: Jalan Ahmad No 10, RT 02/RW 01',
                   ),
                 ),
 
                 const SizedBox(height: 12),
 
-                // Metode pembayaran
-                const Text(
-                  'Metode Pembayaran',
-                  style: TextStyle(fontWeight: FontWeight.w900),
-                ),
+                const Text('Metode Pembayaran', style: TextStyle(fontWeight: FontWeight.w900)),
                 const SizedBox(height: 8),
                 Wrap(
                   spacing: 8,
@@ -432,52 +432,37 @@ class _UserCheckoutPageState extends State<UserCheckoutPage> {
                     _ChipChoice(
                       selected: _metode == 'cash',
                       text: 'CASH',
-                      onTap: _busy
-                          ? null
-                          : () => setState(() => _metode = 'cash'),
+                      onTap: _busy ? null : () => setState(() => _metode = 'cash'),
                     ),
                     _ChipChoice(
                       selected: _metode == 'transfer',
-                      text: 'TRANSFER',
-                      onTap: _busy
-                          ? null
-                          : () => setState(() => _metode = 'transfer'),
+                      text: 'TRANSFER (VA BCA)',
+                      onTap: _busy ? null : () => setState(() => _metode = 'transfer'),
                     ),
                     _ChipChoice(
                       selected: _metode == 'qris',
-                      text: 'QRIS',
-                      onTap: _busy
-                          ? null
-                          : () => setState(() => _metode = 'qris'),
+                      text: 'QRIS (XENDIT)',
+                      onTap: _busy ? null : () => setState(() => _metode = 'qris'),
                     ),
                   ],
                 ),
 
                 const SizedBox(height: 12),
 
-                // Ongkir (readonly)
-                const Text(
-                  'Ongkir (otomatis)',
-                  style: TextStyle(fontWeight: FontWeight.w900),
-                ),
+                const Text('Ongkir (otomatis)', style: TextStyle(fontWeight: FontWeight.w900)),
                 const SizedBox(height: 8),
                 TextField(
                   controller: _ongkirCtrl,
                   enabled: false,
                   keyboardType: TextInputType.number,
                   decoration: const InputDecoration(
-                    prefixIcon: Icon(Icons.payments_outlined),
                     hintText: 'Otomatis dari sistem',
                   ),
                 ),
 
                 const SizedBox(height: 14),
 
-                // Pilih Kurir
-                const Text(
-                  'Pilih Kurir',
-                  style: TextStyle(fontWeight: FontWeight.w900),
-                ),
+                const Text('Pilih Kurir', style: TextStyle(fontWeight: FontWeight.w900)),
                 const SizedBox(height: 10),
                 ..._couriers.map((c) {
                   final isSel = c.key == _selectedKurir;
@@ -497,9 +482,7 @@ class _UserCheckoutPageState extends State<UserCheckoutPage> {
                           color: isSel ? const Color(0xFFF5F3FF) : Colors.white,
                           borderRadius: BorderRadius.circular(18),
                           border: Border.all(
-                            color: isSel
-                                ? const Color(0xFFD8B4FE)
-                                : const Color(0xFFEDE9FE),
+                            color: isSel ? const Color(0xFFD8B4FE) : const Color(0xFFEDE9FE),
                             width: 1,
                           ),
                         ),
@@ -512,34 +495,37 @@ class _UserCheckoutPageState extends State<UserCheckoutPage> {
                                 color: const Color(0xFF6D28D9),
                                 borderRadius: BorderRadius.circular(16),
                               ),
-                              child: Icon(c.icon, color: Colors.white),
+                              alignment: Alignment.center,
+                              child: Text(
+                                c.badge,
+                                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w900),
+                              ),
                             ),
                             const SizedBox(width: 12),
                             Expanded(
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
-                                  Text(
-                                    c.title,
-                                    style: const TextStyle(
-                                      fontWeight: FontWeight.w900,
-                                    ),
-                                  ),
+                                  Text(c.title, style: const TextStyle(fontWeight: FontWeight.w900)),
                                   const SizedBox(height: 2),
-                                  Text(
-                                    c.subtitle,
-                                    style: const TextStyle(
-                                      color: Colors.black54,
-                                    ),
-                                  ),
+                                  Text(c.subtitle, style: const TextStyle(color: Colors.black54)),
                                 ],
                               ),
                             ),
-                            Icon(
-                              isSel
-                                  ? Icons.radio_button_checked
-                                  : Icons.radio_button_off,
-                              color: const Color(0xFF6D28D9),
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                              decoration: BoxDecoration(
+                                color: isSel ? const Color(0xFF6D28D9) : const Color(0xFFEDE9FE),
+                                borderRadius: BorderRadius.circular(999),
+                              ),
+                              child: Text(
+                                isSel ? 'Dipilih' : 'Pilih',
+                                style: TextStyle(
+                                  color: isSel ? Colors.white : const Color(0xFF6D28D9),
+                                  fontWeight: FontWeight.w900,
+                                  fontSize: 12,
+                                ),
+                              ),
                             ),
                           ],
                         ),
@@ -552,10 +538,7 @@ class _UserCheckoutPageState extends State<UserCheckoutPage> {
                   const SizedBox(height: 6),
                   Text(
                     _error!,
-                    style: const TextStyle(
-                      color: Colors.red,
-                      fontWeight: FontWeight.w800,
-                    ),
+                    style: const TextStyle(color: Colors.red, fontWeight: FontWeight.w800),
                   ),
                 ],
 
@@ -563,29 +546,24 @@ class _UserCheckoutPageState extends State<UserCheckoutPage> {
 
                 SizedBox(
                   width: double.infinity,
-                  child: ElevatedButton.icon(
-                    onPressed: (_busy || _quoteLoading || _withinRange == false)
-                        ? null
-                        : _checkout,
+                  child: ElevatedButton(
+                    onPressed: (_busy || _quoteLoading || _withinRange == false) ? null : _checkout,
                     style: ElevatedButton.styleFrom(
                       backgroundColor: const Color(0xFF6D28D9),
                       foregroundColor: Colors.white,
                       padding: const EdgeInsets.symmetric(vertical: 14),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(16),
-                      ),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
                     ),
-                    icon: _busy
+                    child: _busy
                         ? const SizedBox(
                             width: 18,
                             height: 18,
                             child: CircularProgressIndicator(strokeWidth: 2),
                           )
-                        : const Icon(Icons.check_circle_outline),
-                    label: Text(
-                      _busy ? 'Memproses...' : 'Buat Pesanan',
-                      style: const TextStyle(fontWeight: FontWeight.w900),
-                    ),
+                        : const Text(
+                            'Buat Pesanan',
+                            style: TextStyle(fontWeight: FontWeight.w900),
+                          ),
                   ),
                 ),
 
@@ -608,13 +586,13 @@ class _CourierOption {
   final String key;
   final String title;
   final String subtitle;
-  final IconData icon;
+  final String badge;
 
   const _CourierOption({
     required this.key,
     required this.title,
     required this.subtitle,
-    required this.icon,
+    required this.badge,
   });
 }
 
@@ -700,20 +678,12 @@ class _MiniSummary extends StatelessWidget {
         borderRadius: BorderRadius.circular(18),
         border: Border.all(color: const Color(0xFFE9D5FF)),
       ),
-      child: Row(
-        children: [
-          const Icon(Icons.receipt_long_outlined, color: Color(0xFF6D28D9)),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Text(
-              'Kurir: $kurir • Metode: $metode • Ongkir: Rp $ongkir',
-              style: const TextStyle(
-                fontWeight: FontWeight.w900,
-                color: Color(0xFF6D28D9),
-              ),
-            ),
-          ),
-        ],
+      child: Text(
+        'Kurir: $kurir • Metode: $metode • Ongkir: Rp $ongkir',
+        style: const TextStyle(
+          fontWeight: FontWeight.w900,
+          color: Color(0xFF6D28D9),
+        ),
       ),
     );
   }

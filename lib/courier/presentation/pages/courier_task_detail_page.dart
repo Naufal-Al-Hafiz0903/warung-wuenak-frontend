@@ -192,6 +192,56 @@ class _CourierTaskDetailPageState extends State<CourierTaskDetailPage> {
       'longitude',
     ]);
 
+    // ✅ Pickup (Toko) — optional; jika ada, rute dimulai dari toko
+    final tokoMap = (d['toko'] is Map)
+        ? Map<String, dynamic>.from(d['toko'] as Map)
+        : null;
+    final pickupLat = _pickDouble(d, [
+          'pickup_lat',
+          'toko_lat',
+          'store_lat',
+          'origin_lat',
+          'seller_lat',
+          'shop_lat',
+        ]) ??
+        (tokoMap == null
+            ? null
+            : _pickDouble(tokoMap, ['lat', 'toko_lat', 'pickup_lat', 'store_lat']));
+
+    final pickupLng = _pickDouble(d, [
+          'pickup_lng',
+          'toko_lng',
+          'store_lng',
+          'origin_lng',
+          'seller_lng',
+          'shop_lng',
+        ]) ??
+        (tokoMap == null
+            ? null
+            : _pickDouble(tokoMap, ['lng', 'toko_lng', 'pickup_lng', 'store_lng']));
+
+    final pickupName = _pickString(d, [
+          'pickup_name',
+          'toko_name',
+          'nama_toko',
+          'store_name',
+          'shop_name',
+        ]) ??
+        (tokoMap == null
+            ? null
+            : _pickString(tokoMap, ['name', 'nama', 'toko_name', 'nama_toko']));
+
+    final pickupAddress = _pickString(d, [
+          'pickup_address',
+          'toko_address',
+          'alamat_toko',
+          'store_address',
+          'shop_address',
+        ]) ??
+        (tokoMap == null
+            ? null
+            : _pickString(tokoMap, ['address', 'alamat', 'alamat_toko', 'toko_address']));
+
     if (address.trim().isEmpty && (lat == null || lng == null)) {
       _snack('Alamat/koordinat tujuan belum tersedia dari server.');
       return;
@@ -207,6 +257,10 @@ class _CourierTaskDetailPageState extends State<CourierTaskDetailPage> {
           buyerAddress: address.trim().isEmpty ? null : address,
           buyerLat: lat,
           buyerLng: lng,
+          pickupName: pickupName,
+          pickupAddress: pickupAddress,
+          pickupLat: pickupLat,
+          pickupLng: pickupLng,
         ),
       ),
     );
@@ -232,6 +286,60 @@ class _CourierTaskDetailPageState extends State<CourierTaskDetailPage> {
         ]) ??
         _pickString(buyer, ['alamat_user', 'alamatUser', 'alamat']) ??
         '';
+
+    // ✅ Pickup (Toko) — titik awal rute (sesuai requirement)
+    final toko = (d['toko'] is Map)
+        ? Map<String, dynamic>.from(d['toko'] as Map)
+        : const <String, dynamic>{};
+
+    final pickupName = _pickString(d, [
+          'pickup_name',
+          'pickupName',
+          'toko_name',
+          'tokoName',
+        ]) ??
+        _pickString(toko, [
+          'name',
+          'nama_toko',
+          'nama',
+          'toko_name',
+          'tokoName',
+        ]);
+
+    final pickupAddr = _pickString(d, [
+          'pickup_address',
+          'pickupAddress',
+          'alamat_toko',
+          'alamatToko',
+        ]) ??
+        _pickString(toko, [
+          'alamat',
+          'alamat_toko',
+          'alamatToko',
+          'address',
+        ]) ??
+        '';
+
+    final pickupLat = _pickDouble(d, [
+          'pickup_lat',
+          'pickupLat',
+          'toko_lat',
+          'tokoLat',
+        ]) ??
+        _pickDouble(toko, ['lat', 'latitude']);
+
+    final pickupLng = _pickDouble(d, [
+          'pickup_lng',
+          'pickupLng',
+          'toko_lng',
+          'tokoLng',
+        ]) ??
+        _pickDouble(toko, ['lng', 'longitude']);
+
+    final hasPickup =
+        (pickupLat != null && pickupLng != null) ||
+        (pickupAddr.trim().isNotEmpty) ||
+        ((pickupName ?? '').trim().isNotEmpty);
 
     return Scaffold(
       backgroundColor: const Color(0xFFF6F3FF),
@@ -312,13 +420,76 @@ class _CourierTaskDetailPageState extends State<CourierTaskDetailPage> {
                   ),
                 ),
                 const SizedBox(height: 12),
+                if (hasPickup) ...[
+                  _Card(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Container(
+                              width: 36,
+                              height: 36,
+                              decoration: BoxDecoration(
+                                color: const Color(0xFF6D28D9).withOpacity(.10),
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              child: const Icon(
+                                Icons.storefront_rounded,
+                                color: Color(0xFF6D28D9),
+                              ),
+                            ),
+                            const SizedBox(width: 10),
+                            const Text(
+                              'Pickup (Toko)',
+                              style: TextStyle(fontWeight: FontWeight.w900),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 10),
+                        _RowInfo(
+                          label: 'Toko',
+                          value: (pickupName == null || pickupName.trim().isEmpty)
+                              ? 'Toko'
+                              : pickupName,
+                        ),
+                        const SizedBox(height: 6),
+                        _RowInfo(
+                          label: 'Alamat',
+                          value: pickupAddr.trim().isEmpty
+                              ? 'Belum tersedia'
+                              : pickupAddr,
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                ],
+
                 _Card(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Text(
-                        'Tujuan',
-                        style: TextStyle(fontWeight: FontWeight.w900),
+                      Row(
+                        children: [
+                          Container(
+                            width: 36,
+                            height: 36,
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF6D28D9).withOpacity(.10),
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: const Icon(
+                              Icons.location_on_rounded,
+                              color: Color(0xFF6D28D9),
+                            ),
+                          ),
+                          const SizedBox(width: 10),
+                          const Text(
+                            'Tujuan (Pembeli)',
+                            style: TextStyle(fontWeight: FontWeight.w900),
+                          ),
+                        ],
                       ),
                       const SizedBox(height: 10),
                       _RowInfo(label: 'Pembeli', value: buyerName),
